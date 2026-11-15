@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#120b08">
+<title>still · music for sitting quietly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="sky"></canvas>
+
+  <header id="top" class="fadeable">
+    <div class="brand">still</div>
+    <nav>
+      <button id="timer" title="a sitting of fixed length, closed by three bowls">timer <span>∞</span></button>
+      <button id="a432" title="tune to A = 432 Hz instead of 440 Hz">432 hz</button>
+      <button id="surprise" title="let it choose for you">surprise</button>
+      <button id="reset" title="return to where it began">here</button>
+      <button id="share" title="copy a link to this music">share</button>
+      <button id="full" title="fullscreen (F)">⤢</button>
+    </nav>
+  </header>
+
+  <main id="stage" class="fadeable">
+    <div id="transport">
+      <button id="play" aria-label="begin"><span class="dot"></span></button>
+      <p id="status">touch to begin</p>
+    </div>
+
+    <section id="moods" aria-label="mood"></section>
+    <p id="moodline"></p>
+
+    <div class="rule"></div>
+    <section id="choices"></section>
+    <div class="rule"></div>
+    <section id="sliders"></section>
+  </main>
+
+  <footer id="keys" class="fadeable">space &nbsp;pause &nbsp;·&nbsp; h &nbsp;hide &nbsp;·&nbsp; f &nbsp;fullscreen &nbsp;·&nbsp; double-click a slider to reset it</footer>
+
+  <div id="toast"></div>
+
+  <script src="audio.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
