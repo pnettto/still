@@ -2,6 +2,8 @@
 
 *Music for sitting quietly.*
 
+**→ [pnettto.github.io/still](https://pnettto.github.io/still/)**
+
 A meditation and yoga music maker, grown from the generative music of **here**. Open `index.html` and touch the small light. It begins exactly where *here* begins: the same warm drone, the same slow chords breathing six times a minute, the same soft wooden voice. From there you steer.
 
 **Moments** are ready-made settings: *morning, flow, focus, devotion, savasana, sleep*. One tap, then adjust anything.
