@@ -10,11 +10,18 @@
     mode: 'here', voice: 'wood', nature: 'none', pitch: 7, a432: false,
     breath: 6, melody: 0.5, drone: 0.5, light: 0.5, space: 0.5, natureLevel: 0.5, volume: 0.8, bells: 0,
   };
-  // settings that belong to the person, not to the music: moments and "here" leave them alone
+  // settings that belong to the person, not to the music: presets and "begin" leave them alone
   const PERSONAL = ['volume', 'bells'];
 
-  // moments: ready-made settings for a time of day or a kind of practice
-  const MOMENTS = [
+  // presets: ready-made settings for a time of day or a kind of practice.
+  // "begin" is the original music; "surprise me" chooses for you.
+  const BEGIN = (() => {
+    const o = {};
+    Object.keys(DEFAULTS).forEach(k => { if(!PERSONAL.includes(k)) o[k] = DEFAULTS[k]; });
+    return o;
+  })();
+  const PRESETS = [
+    ['begin', 'the original, as it first was', BEGIN],
     ['morning', 'first light, birdsong, a bright thumb piano',
       { mode: 'dawn', voice: 'kalimba', nature: 'forest', pitch: 8, breath: 6, melody: 0.6, drone: 0.4, light: 0.62, space: 0.5, natureLevel: 0.5 }],
     ['flow', 'for moving practice: a steady, grounded figure',
@@ -27,6 +34,7 @@
       { mode: 'tender', voice: 'bowl', nature: 'ocean', pitch: 5, breath: 5, melody: 0.3, drone: 0.55, light: 0.38, space: 0.72, natureLevel: 0.5 }],
     ['sleep', 'low and dark, rain, very little happening',
       { mode: 'deep', voice: 'harp', nature: 'rain', pitch: 4, breath: 4, melody: 0.18, drone: 0.6, light: 0.25, space: 0.78, natureLevel: 0.55 }],
+    ['surprise me', 'let it choose for you', null],
   ];
   const NOTES = ['G', 'A♭', 'A', 'B♭', 'B', 'C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯'];
   const words = list => v => list[Math.min(list.length - 1, Math.floor(v * list.length))];
@@ -137,20 +145,6 @@
     save();
   }
 
-  // moments
-  const momentBtns = MOMENTS.map(([name, title, values]) => {
-    const b = document.createElement('button');
-    b.textContent = name; b.title = title;
-    b.addEventListener('click', () => { Object.keys(values).forEach(k => set(k, values[k])); });
-    $('moments').appendChild(b);
-    return b;
-  });
-  function syncMoments(){
-    momentBtns.forEach((b, i) => {
-      const v = MOMENTS[i][2];
-      b.classList.toggle('on', Object.keys(v).every(k => k === 'natureLevel' && v.nature === 'none' || state[k] === v[k]));
-    });
-  }
 
   // moods
   const moodBtns = MOODS.map(([v, text, line]) => {
@@ -179,6 +173,34 @@
     controls[p.k] = { btns, sync(){ btns.forEach(b => b.classList.toggle('on', b.dataset.v === String(state[p.k]))); } };
   });
 
+  // presets — the same quiet style as voice and nature, so moods stay the main thing
+  const presetsRow = document.createElement('div'); presetsRow.className = 'row';
+  const presetsLabel = document.createElement('label'); presetsLabel.textContent = 'presets';
+  const presetsBox = document.createElement('div'); presetsBox.className = 'opts';
+  presetsRow.append(presetsLabel, presetsBox);
+  $('choices').appendChild(presetsRow);
+
+  const presetBtns = PRESETS.map(([name, title, values]) => {
+    const b = document.createElement('button');
+    b.textContent = name; b.title = title;
+    b.addEventListener('click', () => applyPreset(name, values, b));
+    presetsBox.appendChild(b);
+    return b;
+  });
+  function applyPreset(name, values, btn){
+    if(name === 'surprise me') return surprise(btn);
+    const v = name === 'begin' ? BEGIN : values;
+    Object.keys(v).forEach(k => set(k, v[k]));
+  }
+  function syncPresets(){
+    presetBtns.forEach((b, i) => {
+      const [name] = PRESETS[i];
+      if(name === 'surprise me'){ b.classList.remove('on'); return; }
+      const v = name === 'begin' ? BEGIN : PRESETS[i][2];
+      b.classList.toggle('on', Object.keys(v).every(k => state[k] === v[k]));
+    });
+  }
+
   // sliders
   SLIDERS.forEach(p => {
     const row = document.createElement('div'); row.className = 'slider';
@@ -203,28 +225,49 @@
   // the top bar
   const a432Btn = $('a432');
   controls.a432 = { sync(){ a432Btn.classList.toggle('on', state.a432); } };
-  a432Btn.addEventListener('click', () => { set('a432', !state.a432); toast(state.a432 ? 'tuned to 432 hz' : 'tuned to 440 hz'); });
+  a432Btn.addEventListener('click', () => { set('a432', !state.a432); feedback(a432Btn, state.a432 ? 'tuned to 432 hz' : 'tuned to 440 hz'); });
 
   function sync(k){
     if(k){ controls[k] && controls[k].sync(); }
     else Object.values(controls).forEach(c => c.sync());
     if(!k || k === 'mode') document.documentElement.style.setProperty('--glow', PALETTES[state.mode][1].join(', '));
-    syncMoments();
+    syncPresets();
   }
   sync();
 
-  const toastEl = $('toast');
-  let toastT;
-  function toast(msg, ms){
-    toastEl.textContent = msg; toastEl.classList.add('on');
-    clearTimeout(toastT); toastT = setTimeout(() => toastEl.classList.remove('on'), ms || 2600);
+  const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  const tipEl = $('tip'), feedbackEl = $('feedback');
+  let feedbackT;
+
+  function place(el, bubble, below){
+    const r = el.getBoundingClientRect();
+    bubble.style.left = '0px'; bubble.style.top = '0px';
+    const bw = bubble.offsetWidth, bh = bubble.offsetHeight;
+    let x = r.left + r.width / 2 - bw / 2;
+    let y = below ? r.bottom + 10 : r.top - bh - 10;
+    if(!below && y < 8) y = r.bottom + 10;
+    if(below && y + bh > window.innerHeight - 8) y = r.top - bh - 10;
+    x = Math.max(8, Math.min(window.innerWidth - bw - 8, x));
+    bubble.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
   }
 
-  $('reset').addEventListener('click', () => {
-    Object.keys(DEFAULTS).forEach(k => { if(!PERSONAL.includes(k)) set(k, DEFAULTS[k]); });
-    toast('back where it began');
-  });
-  $('surprise').addEventListener('click', () => {
+  // feedback appears right beside the control you touched — never at the bottom
+  function feedback(anchor, html, ms){
+    feedbackEl.innerHTML = html; place(anchor, feedbackEl, false); feedbackEl.classList.add('on');
+    clearTimeout(feedbackT); feedbackT = setTimeout(() => feedbackEl.classList.remove('on'), ms || 2600);
+  }
+
+  // tooltips: the same quiet copy as before, but immediate and styled
+  document.querySelectorAll('[title]').forEach(el => { el.dataset.tip = el.title; el.removeAttribute('title'); });
+  function showTip(el){ const t = el.dataset.tip; if(!t) return; tipEl.textContent = t; place(el, tipEl, false); tipEl.classList.add('on'); }
+  function hideTip(){ tipEl.classList.remove('on'); }
+  document.addEventListener('mouseover', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if(el) showTip(el); else hideTip(); });
+  document.addEventListener('mouseout', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if(el && !el.contains(e.relatedTarget)) hideTip(); });
+  document.addEventListener('focusin', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if(el) showTip(el); });
+  document.addEventListener('focusout', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if(el && !el.contains(e.relatedTarget)) hideTip(); });
+
+  function surprise(btn){
     const pick = a => a[Math.floor(Math.random() * a.length)];
     const r = (a, b) => Math.round((a + Math.random() * (b - a)) * 100) / 100;
     const mode = pick(MOODS.filter(m => m[0] !== state.mode))[0];
@@ -234,8 +277,8 @@
     set('pitch', 3 + Math.floor(Math.random() * 7));
     set('breath', pick([4, 5, 5.5, 6, 6, 6.5, 7]));
     set('melody', r(0.3, 0.7)); set('drone', r(0.3, 0.7)); set('light', r(0.35, 0.65)); set('space', r(0.4, 0.8));
-    toast(MOODS.find(m => m[0] === mode)[2].split(' · ')[0]);
-  });
+    feedback(btn, MOODS.find(m => m[0] === mode)[2].split(' · ')[0]);
+  }
   // sharing, through Pingo (https://pingo.pnetto.store/llms.txt), a private link shortener.
   // The key is in this file, so it is public: Pingo only accepts it from this app's domains, and
   // the worst anyone can do with it is make links, within Pingo's limits.
@@ -290,10 +333,12 @@
       short = await pingo(url);
       if(short) rememberShort(url, short);
     }
-    if(await copy(short || url)) toast(short ? 'a short link to this music is copied' : 'a link to this music is copied');
-    else {
+    const link = short || url;
+    if(await copy(link)){
+      feedback($('share'), 'link copied · ' + escapeHtml(link.replace(/^https?:\/\//, '')));
+    } else {
       history.replaceState(null, '', url);
-      toast(short ? 'copied link blocked · short link is ' + short.replace(/^https?:\/\//, '') : 'the link is in the address bar');
+      feedback($('share'), 'copy blocked · the link is in the address bar');
     }
   });
   function fullscreen(){
@@ -301,11 +346,20 @@
     if(!document.fullscreenElement && el.requestFullscreen) el.requestFullscreen().catch(() => {});
     else if(document.fullscreenElement) document.exitFullscreen();
   }
-  $('full').addEventListener('click', fullscreen);
 
-  // the sitting timer: ∞, or a fixed length closed by three bowls
+  // about
+  const aboutEl = $('about');
+  function openAbout(){ aboutEl.classList.add('open'); aboutEl.setAttribute('aria-hidden', 'false'); }
+  function closeAbout(){ aboutEl.classList.remove('open'); aboutEl.setAttribute('aria-hidden', 'true'); }
+  $('about-btn').addEventListener('click', openAbout);
+  $('about-close').addEventListener('click', closeAbout);
+  aboutEl.addEventListener('click', e => { if(e.target === aboutEl) closeAbout(); });
+
+  // the sitting timer: ∞, or a fixed length closed by three bowls.
+  // It runs on wall-clock time, so it keeps counting while the tab is out of focus.
   const LENGTHS = [0, 5, 10, 20, 30, 45, 60];
   let lengthIdx = 0, remaining = 0, closing = false;
+  let timerLast = Date.now(), timerEnd = null;
   const timerBtn = $('timer'), timerVal = timerBtn.querySelector('span');
   function showTimer(){
     if(!LENGTHS[lengthIdx]){ timerVal.textContent = '∞'; timerBtn.classList.remove('on'); return; }
@@ -313,12 +367,30 @@
     timerVal.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
     timerBtn.classList.add('on');
   }
+  function finishSitting(){
+    if(!started || !playing || closing || !LENGTHS[lengthIdx]) return;
+    clearTimeout(timerEnd);
+    remaining = 0; closing = true;
+    status('closing');
+    engine.closing(() => {
+      closing = false; playing = false;
+      status('welcome back');
+      remaining = LENGTHS[lengthIdx] * 60; showTimer();
+    });
+  }
+  function armTimerEnd(){
+    clearTimeout(timerEnd);
+    if(started && playing && !closing && LENGTHS[lengthIdx]){
+      timerEnd = setTimeout(finishSitting, remaining * 1000 / SPEED);
+    }
+  }
   timerBtn.addEventListener('click', () => {
     if(closing) return;
     lengthIdx = (lengthIdx + 1) % LENGTHS.length;
     remaining = LENGTHS[lengthIdx] * 60;
+    timerLast = Date.now(); armTimerEnd();
     showTimer();
-    toast(LENGTHS[lengthIdx] ? 'a sitting of ' + LENGTHS[lengthIdx] + ' minutes, closed by three bowls' : 'no end');
+    feedback(timerBtn, LENGTHS[lengthIdx] ? 'a sitting of ' + LENGTHS[lengthIdx] + ' minutes, closed by three bowls' : 'no end');
   });
   showTimer();
 
@@ -333,13 +405,14 @@
   bellsBtn.addEventListener('click', () => {
     const next = BELLS[(BELLS.indexOf(state.bells) + 1) % BELLS.length];
     set('bells', next);
-    toast(next ? 'a soft bowl every ' + next + ' minutes' : 'no bells');
+    feedback(bellsBtn, next ? 'a soft bowl every ' + next + ' minutes' : 'no bells');
   });
 
-  // export: compose an mp3 of the current settings
+  // export: assemble an mp3 of the current settings, faster than real time
   const sheet = $('sheet'), lengthsEl = $('lengths'), progressBar = sheet.querySelector('.bar i'), progressText = sheet.querySelector('#progress p');
   const EXPORT_LENGTHS = [10, 20, 30, 60];
   let exportMinutes = 20, exporting = false, cancelled = false, lastURL = null;
+  const exportChip = $('exportchip'), exportChipText = exportChip.querySelector('span'), exportChipCancel = exportChip.querySelector('button');
   const lengthBtns = EXPORT_LENGTHS.map(m => {
     const b = document.createElement('button');
     b.textContent = m + ' min';
@@ -348,27 +421,42 @@
     return b;
   });
   lengthBtns[1].classList.add('on');
-  function openSheet(){ sheet.classList.add('open'); sheet.classList.remove('done'); sheet.setAttribute('aria-hidden', 'false'); }
-  function closeSheet(){
-    if(exporting){ cancelled = true; }
-    sheet.classList.remove('open', 'busy'); sheet.setAttribute('aria-hidden', 'true');
+
+  function setProgress(html){ progressText.innerHTML = html; }
+  function syncExportChip(){
+    if(exporting && !sheet.classList.contains('open')){
+      exportChip.classList.add('on'); place($('export'), exportChip, true);
+    } else exportChip.classList.remove('on');
   }
+  function openSheet(){ sheet.classList.add('open'); sheet.setAttribute('aria-hidden', 'false'); syncExportChip(); }
+  function closeSheet(){
+    // leaving the sheet keeps the render going in the background
+    sheet.classList.remove('open'); sheet.setAttribute('aria-hidden', 'true');
+    syncExportChip();
+  }
+  function cancelExport(){ if(exporting) cancelled = true; }
   $('export').addEventListener('click', openSheet);
   $('sheet-close').addEventListener('click', closeSheet);
-  sheet.addEventListener('click', e => { if(e.target === sheet && !exporting) closeSheet(); });
+  $('sheet-cancel').addEventListener('click', cancelExport);
+  exportChipCancel.addEventListener('click', cancelExport);
+  sheet.addEventListener('click', e => { if(e.target === sheet) closeSheet(); });
   $('sheet-go').addEventListener('click', async () => {
     if(exporting) return;
     exporting = true; cancelled = false;
     sheet.classList.add('busy'); sheet.classList.remove('done');
-    $('sheet-close').textContent = 'cancel';
-    progressBar.style.width = '0%'; progressText.textContent = 'composing…';
+    progressBar.style.width = '0%'; setProgress('assembling…');
+    exportChipText.textContent = 'assembling…';
+    syncExportChip();
     const started = performance.now();
     try {
       const blob = await window.StillExport.render(state, exportMinutes, f => {
+        const pct = Math.floor(f * 100);
         progressBar.style.width = (f * 100).toFixed(1) + '%';
         const el = (performance.now() - started) / 1000;
         const left = f > 0.03 ? Math.max(0, el / f - el) : null;
-        progressText.textContent = 'composing · ' + Math.floor(f * 100) + '%' + (left !== null ? ' · about ' + (left > 90 ? Math.round(left / 60) + ' min' : Math.ceil(left / 5) * 5 + ' s') + ' left' : '');
+        const line = 'assembling · ' + pct + '%' + (left !== null ? ' · about ' + (left > 90 ? Math.round(left / 60) + ' min' : Math.ceil(left / 5) * 5 + ' s') + ' left' : '');
+        setProgress(line);
+        exportChipText.textContent = 'assembling · ' + pct + '%';
       }, () => cancelled);
       if(blob){
         const name = `still-${state.mode}-${state.voice}${state.nature !== 'none' ? '-' + state.nature : ''}-${exportMinutes}min.mp3`;
@@ -377,19 +465,22 @@
         const a = document.createElement('a'); a.href = lastURL; a.download = name;
         document.body.appendChild(a); a.click(); a.remove();
         progressBar.style.width = '100%';
-        progressText.innerHTML = `saved · <a href="${lastURL}" download="${name}">${name}</a> · ${(blob.size / 1048576).toFixed(0)} MB`;
+        setProgress(`saved · <a href="${lastURL}" download="${name}">${name}</a> · ${(blob.size / 1048576).toFixed(0)} MB`);
         sheet.classList.add('done');
+        feedback($('export'), `saved · <a href="${lastURL}" download="${name}">${name}</a>`);
+      } else if(cancelled){
+        setProgress('cancelled');
       }
     } catch(e){
       console.error(e);
-      progressText.textContent = 'something went wrong · ' + e.message;
+      setProgress('something went wrong · ' + e.message);
     }
     exporting = false;
     sheet.classList.remove('busy');
-    $('sheet-close').textContent = 'close';
+    syncExportChip();
   });
 
-  // ------------------------------------------------------------ begin, pause, hide
+  // ------------------------------------------------------------ begin, pause
   const playBtn = $('play'), statusEl = $('status');
   let started = false, playing = false;
 
@@ -406,6 +497,7 @@
     wake();
     status('');
     playBtn.setAttribute('aria-label', 'pause');
+    timerLast = Date.now(); armTimerEnd();
   }
   function togglePlay(){
     if(!started) return begin();
@@ -414,7 +506,8 @@
     if(playing){
       engine.resume(); status('');
       if(LENGTHS[lengthIdx] && remaining <= 0) remaining = LENGTHS[lengthIdx] * 60;
-    } else { engine.pause(); status('resting'); }
+      timerLast = Date.now(); armTimerEnd();
+    } else { engine.pause(); status('resting'); clearTimeout(timerEnd); }
     playBtn.setAttribute('aria-label', playing ? 'pause' : 'continue');
   }
   playBtn.addEventListener('click', togglePlay);
@@ -424,8 +517,10 @@
     if(e.target.tagName === 'INPUT' && e.key.startsWith('Arrow')) return;
     if(k === ' ' || (k === 'enter' && !started)){ e.preventDefault(); togglePlay(); }
     else if(k === 'f') fullscreen();
-    else if(k === 'escape' && sheet.classList.contains('open')) closeSheet();
-    else if(k === 'h'){ body.classList.toggle('hidden'); if(body.classList.contains('hidden')) toast('h · to return', 1800); }
+    else if(k === 'escape'){
+      if(aboutEl.classList.contains('open')) closeAbout();
+      else if(sheet.classList.contains('open')) closeSheet();
+    }
   });
 
   // ------------------------------------------------------------ the sky: a quiet wash of colour
@@ -471,19 +566,15 @@
       dot.style.setProperty('--o', ((0.45 + 0.4 * breath + 0.3 * pulse) * (playing ? 1 : 0.5)).toFixed(3));
     }
 
-    // the sitting timer
+    // the sitting timer: wall-clock, so it stays honest across pauses and background tabs
     if(started && playing && !closing && LENGTHS[lengthIdx]){
-      remaining -= dt * SPEED;
-      if(remaining <= 0){
-        remaining = 0; closing = true;
-        status('closing');
-        engine.closing(() => {
-          closing = false; playing = false;
-          status('welcome back');
-          remaining = LENGTHS[lengthIdx] * 60; showTimer();
-        });
-      }
-      showTimer();
+      const nowMs = Date.now();
+      remaining -= (nowMs - timerLast) / 1000 * SPEED;
+      timerLast = nowMs;
+      if(remaining <= 0) finishSitting();
+      else showTimer();
+    } else {
+      timerLast = Date.now();
     }
 
     const target = PALETTES[state.mode];

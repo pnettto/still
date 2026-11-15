@@ -596,14 +596,22 @@
         this.pads = this.pads.filter(p => p.end > now);
       }
 
-      // tanpura: Pa, Sa, Sa, low Sa, round and round, at the pace of the breath
+      // tanpura: Pa, Sa, Sa, low Sa, round and round, at the pace of the breath.
+      // The plucks are humanized — tiny timing and loudness drift — so the drone feels
+      // like a hand, not a metronome, and now and then it lingers or adds a note.
       if(M.drone === 'tanpura' && now + 0.5 >= this.nextTanpuraAt){
         const cycle = 60 / this.p.breath * 0.46, t = this.nextTanpuraAt, b = this.base;
+        const drift = 0.985 + rand() * 0.03;                       // the breath itself wanders
         [[b + 7, 0], [b + 12, 0.25], [b + 12, 0.5], [b, 0.75]].forEach(([n, f], i) => {
           const m = n < 31 ? n + 12 : n;
-          this.pluck('tanpura', m, t + f * cycle + rnd(0, 0.03), [0.09, 0.075, 0.075, 0.1][i], [-0.25, 0.1, 0.2, -0.05][i], this.tanpuraBus);
+          const gain = [0.09, 0.075, 0.075, 0.1][i] * (0.92 + rand() * 0.16);
+          this.pluck('tanpura', m, t + f * cycle * drift + rnd(-0.02, 0.02), gain, [-0.25, 0.1, 0.2, -0.05][i], this.tanpuraBus);
         });
-        this.nextTanpuraAt += cycle;
+        // an occasional extra Sa, as if the hand lingers on the string
+        if(rand() < 0.22){
+          this.pluck('tanpura', b + 12, t + cycle * drift * 0.62 + rnd(-0.01, 0.01), 0.05 + rand() * 0.03, 0.15, this.tanpuraBus);
+        }
+        this.nextTanpuraAt += cycle * drift;
       }
 
       const d = this.p.melody, voice = this.p.voice, V = VOICES[voice] || VOICES.wood;
@@ -660,16 +668,26 @@
         this.note(voice, n, t + gap * 2, 0.2);
       }
       else if(M.motion === 'raga'){
-        // raga: rising and falling lines through the scale; the flute glides between them
-        const len = 3 + Math.floor(rand() * 4);
-        let i = Math.floor(rnd(0, notes.length - 3)), dir = 1;
+        // raga: an alaap-like line that rises, lingers, turns and settles — uneven note
+        // lengths and small ornaments so it breathes instead of repeating
+        const len = 3 + Math.floor(rand() * 5);
+        let i = Math.floor(rnd(0, Math.max(1, notes.length - 3))), dir = 1;
         const line = [];
         let at = 0;
         for(let k = 0; k < len; k++){
           line.push([at, notes[i]]);
-          at += step * pick([1, 1, 1.5, 2]);
-          if(k === Math.floor(len / 2) && rand() < 0.6) dir = -1;
+          // the phrase lingers unevenly on each note, then moves on
+          const hold = pick([0.9, 1.1, 1.4, 1.8, 2.4]);
+          at += step * hold + rnd(0, 0.05);
+          if(k === Math.floor(len / 2) && rand() < 0.65) dir = -1;
+          else if(k > 0 && rand() < 0.2) dir = -dir;          // a small turn
           i = Math.max(0, Math.min(notes.length - 1, i + dir));
+          // a brief ornament: the voice dips to a neighbour and back
+          if(rand() < 0.2 && k < len - 1){
+            const nb = Math.max(0, Math.min(notes.length - 1, i + (rand() < 0.5 ? -1 : 1)));
+            line.push([at, notes[nb]]);
+            at += step * 0.55 + rnd(0, 0.03);
+          }
         }
         if(voice === 'flute') this.note('flute', line[0][1], t, vel(), line);
         else line.forEach(([a, n]) => this.note(voice, n, t + a, vel()));

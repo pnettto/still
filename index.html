@@ -19,11 +19,9 @@
       <button id="timer" title="a sitting of fixed length, closed by three bowls">timer <span>∞</span></button>
       <button id="bells" title="a soft bowl every few minutes, to come back to the breath">bells <span>off</span></button>
       <button id="a432" title="tune to A = 432 Hz instead of 440 Hz">432 hz</button>
-      <button id="surprise" title="let it choose for you">surprise</button>
-      <button id="reset" title="return to where it began">here</button>
       <button id="share" title="copy a link to this music">share</button>
       <button id="export" title="save this music as an mp3">export</button>
-      <button id="full" title="fullscreen (F)">⤢</button>
+      <button id="about-btn" title="about this app">about</button>
     </nav>
   </header>
 
@@ -33,7 +31,6 @@
       <p id="status">touch to begin</p>
     </div>
 
-    <section id="moments" aria-label="moments"></section>
     <section id="moods" aria-label="mood"></section>
 
     <div class="rule"></div>
@@ -42,17 +39,31 @@
     <section id="sliders"></section>
   </main>
 
-  <footer id="keys" class="fadeable">space &nbsp;pause &nbsp;·&nbsp; h &nbsp;hide &nbsp;·&nbsp; f &nbsp;fullscreen &nbsp;·&nbsp; double-click a slider to reset it</footer>
+  <footer id="keys" class="fadeable">space &nbsp;pause &nbsp;·&nbsp; double-click a slider to reset it</footer>
 
-  <div id="toast"></div>
+  <div id="about" aria-hidden="true">
+    <div class="card">
+      <p class="title">about still</p>
+      <p class="sub">a free application, made to bring joy into your relaxing moments — good for yoga, meditation, focus time, and wherever you sit quietly.</p>
+      <p class="sub">feel free to share it with friends and export the songs.</p>
+      <div class="actions"><button id="about-close">close</button></div>
+    </div>
+  </div>
+
+  <div id="tip" role="tooltip"></div>
+  <div id="feedback"></div>
+  <div id="exportchip" aria-hidden="true"><span></span><button aria-label="cancel export">×</button></div>
 
   <div id="sheet" aria-hidden="true">
     <div class="card">
       <p class="title">take this music with you</p>
-      <p class="sub">an mp3 of exactly what you hear now, composed fresh, with a soft beginning and three bowls at the end</p>
       <div class="opts" id="lengths"></div>
       <div id="progress"><div class="bar"><i></i></div><p></p></div>
-      <div class="actions"><button id="sheet-go">compose</button><button id="sheet-close">close</button></div>
+      <div class="actions">
+        <button id="sheet-go">download</button>
+        <button id="sheet-cancel">cancel</button>
+        <button id="sheet-close">close</button>
+      </div>
     </div>
   </div>
 
