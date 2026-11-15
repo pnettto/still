@@ -82,13 +82,73 @@
     flute:   { reg: 0,   step: 0.75 },
   };
 
-  const rnd = (a, b) => a + Math.random() * (b - a);
-  const pick = a => a[Math.floor(Math.random() * a.length)];
+  // Seeded randomness. The scheduler draws from the engine's own sequence; every note and
+  // chord draws from a sequence seeded by its moment in time. So the same seed always makes
+  // the same music, which lets an export be rendered in overlapping chunks that agree exactly.
+  function mulberry(a){
+    return function(){
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  const hash = (...xs) => xs.reduce((h, x) => Math.imul(h ^ (x | 0), 0x9E3779B1) ^ (h >>> 15), 0x811C9DC5);
+  const hashStr = str => hash(...[...str].map(c => c.charCodeAt(0)));
+  let RNG = Math.random;
+  const rand = () => RNG();
+  const rnd = (a, b) => a + rand() * (b - a);
+  const pick = a => a[Math.floor(rand() * a.length)];
+  function seeded(seed, fn){
+    const prev = RNG; RNG = mulberry(seed);
+    try { return fn(); } finally { RNG = prev; }
+  }
+
+  // decoded nature recordings, shared by every engine (live, and each export chunk)
+  const SOUNDS = {};
+  function loadNature(name, ctx){
+    if(SOUNDS[name]) return SOUNDS[name];
+    return SOUNDS[name] = new Promise((resolve, reject) => {
+      const have = () => window.STILL_SOUNDS && window.STILL_SOUNDS[name];
+      if(have()) return resolve(have());
+      const s = document.createElement('script');
+      s.src = 'sounds/' + name + '.js';
+      s.onload = () => have() ? resolve(have()) : reject(new Error('empty ' + name));
+      s.onerror = () => reject(new Error('could not load ' + name));
+      document.head.appendChild(s);
+    }).then(uri => {
+      const bin = atob(uri.slice(uri.indexOf(',') + 1));
+      const bytes = new Uint8Array(bin.length);
+      for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Promise((res, rej) => ctx.decodeAudioData(bytes.buffer, res, rej));
+    }).then(loopable).catch(e => { delete SOUNDS[name]; throw e; });
+  }
+  // fold the last seconds over the first (equal power), so the recording loops without a seam
+  function loopable(buf){
+    const X = Math.floor(Math.min(4, buf.duration / 6) * buf.sampleRate), L = buf.length - X;
+    const out = new AudioBuffer({ numberOfChannels: buf.numberOfChannels, length: L, sampleRate: buf.sampleRate });
+    for(let ch = 0; ch < buf.numberOfChannels; ch++){
+      const a = buf.getChannelData(ch), o = out.getChannelData(ch);
+      o.set(a.subarray(0, L));
+      for(let i = 0; i < X; i++){
+        const t = i / X;
+        o[i] = a[i] * Math.sin(t * Math.PI / 2) + a[L + i] * Math.cos(t * Math.PI / 2);
+      }
+    }
+    return out;
+  }
 
   // ------------------------------------------------------------ engine
   class Engine {
-    constructor(p){
+    // opts: seed (same seed → same music), G0 (global time at this context's 0, for export chunks),
+    //       cutoff (local time before which nothing is actually made: it only advances the score)
+    constructor(p, opts){
+      opts = opts || {};
       this.p = Object.assign({}, p);
+      this.seed = opts.seed !== undefined ? opts.seed : Math.floor(Math.random() * 2 ** 31);
+      this.rand = mulberry(this.seed);
+      this.G0 = opts.G0 || 0;
+      this.cutoff = opts.cutoff !== undefined ? opts.cutoff : -Infinity;
       this.ctx = null;
       this.onNote = null;
       this.chordIndex = 0;
@@ -102,10 +162,13 @@
     get base(){ return tonicBase(this.p.pitch); }
     get mood(){ return MOODS[this.p.mode] || MOODS.here; }
 
-    start(ctx){
+    start(ctx, opts){
       if(this.ctx) return;
+      opts = opts || {};
+      this.exporting = !!opts.export;
       ctx = this.ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
       const now = ctx.currentTime;
+      const prevRng = RNG; RNG = mulberry(this.seed);   // the rooms and noise are the same in every chunk
 
       this.master = ctx.createGain();
       this.master.gain.value = 0;
@@ -132,7 +195,7 @@
       this.bus = ctx.createGain(); this.bus.gain.value = 0.55;
       this.bus.connect(this.dry).connect(this.master);
       this.bus.connect(this.hall);
-      this.bus.connect(this.vast);
+      this.bus.connect(this.vast); this.vastOn = true;
 
       this.padFilter = ctx.createBiquadFilter();
       this.padFilter.type = 'lowpass'; this.padFilter.frequency.value = 700; this.padFilter.Q.value = 0.4;
@@ -154,20 +217,26 @@
       const len = ctx.sampleRate * 2;
       this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
       const nd = this.noiseBuf.getChannelData(0);
-      for(let i = 0; i < len; i++) nd[i] = Math.random() * 2 - 1;
+      for(let i = 0; i < len; i++) nd[i] = rand() * 2 - 1;
+
+      RNG = prevRng;
 
       this.drone();
       this.applySpace(true);
       this.applyLight(true);
-      if(this.p.nature !== 'none') this.setNature(this.p.nature);
 
+      // the score begins at global time 0; t0 is that moment in this context's own time
+      const t0 = this.exporting ? -this.G0 : now;
+      this.nextChordAt = t0 + 0.5;
+      this.nextNoteAt = t0 + 7;
+      this.nextBeatAt = t0 + 4;
+      this.nextTanpuraAt = t0 + 0.3;
+      this.nextBellAt = t0 + (this.p.bells || 0) * 60;
+      if(this.exporting){ this.master.gain.value = 1; return; }   // the exporter shapes the fades itself
+
+      if(this.p.nature !== 'none') this.setNature(this.p.nature);
       this.master.gain.setValueAtTime(0, now);
       this.master.gain.linearRampToValueAtTime(1.0, now + 10);
-
-      this.nextChordAt = now + 0.5;
-      this.nextNoteAt = now + 7;
-      this.nextBeatAt = now + 4;
-      this.nextTanpuraAt = now + 0.3;
       if(!this.offline) this.timer = setInterval(() => this.tick(), 200);
     }
 
@@ -179,7 +248,7 @@
         let lp = 0;
         for(let i = 0; i < len; i++){
           const x = i / len;
-          lp = lp * 0.6 + (Math.random() * 2 - 1) * 0.4;
+          lp = lp * 0.6 + (rand() * 2 - 1) * 0.4;
           d[i] = lp * Math.pow(1 - x, decay) * (i < rate * 0.02 ? i / (rate * 0.02) : 1);
         }
       }
@@ -197,8 +266,11 @@
     drone(){
       const ctx = this.ctx;
       const g = ctx.createGain();
-      g.gain.setValueAtTime(0, ctx.currentTime);
-      g.gain.linearRampToValueAtTime(0.10, ctx.currentTime + 14);
+      if(this.exporting && this.G0 > 0) g.gain.value = 0.10;
+      else {
+        g.gain.setValueAtTime(0, ctx.currentTime);
+        g.gain.linearRampToValueAtTime(0.10, ctx.currentTime + 14);
+      }
       this.droneLevel = ctx.createGain();
       this.droneLevel.gain.value = this.droneGain();
       const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 320;
@@ -212,7 +284,9 @@
         const lg = ctx.createGain(); lg.gain.value = 0.15;
         lfo.connect(lg).connect(og.gain);
         o.connect(og).connect(g);
-        o.start(); lfo.start();
+        // when exporting in chunks, start each oscillator in phase with the whole piece
+        const at = f => this.exporting ? Math.ceil(this.G0 * f - 1e-9) / f - this.G0 : 0;
+        o.start(at(o.frequency.value * Math.pow(2, o.detune.value / 1200))); lfo.start(at(lfo.frequency.value));
         return { o, og };
       });
     }
@@ -230,6 +304,10 @@
 
     // ------------------------------------------------------------ chords
     pad(chord, when, dur){
+      if(when < this.cutoff) return;
+      seeded(hash(this.seed, Math.round((when + this.G0) * 1000), 1), () => this._pad(chord, when, dur));
+    }
+    _pad(chord, when, dur){
       const ctx = this.ctx, base = this.base, envs = [], oscs = [];
       const P = PADS[this.mood.pad] || PADS.here;
       chord.forEach((rel, i) => {
@@ -237,17 +315,17 @@
         const env = ctx.createGain();
         const peak = (i === 0 ? 0.05 : 0.035) * (m > 60 ? 0.7 : 1) * (m > 72 ? 0.7 : 1);
         env.gain.setValueAtTime(0, when);
-        env.gain.linearRampToValueAtTime(peak, when + P.attack + Math.random() * 2);
+        env.gain.linearRampToValueAtTime(peak, when + P.attack + rand() * 2);
         env.gain.setValueAtTime(peak, when + dur - 1);
         env.gain.linearRampToValueAtTime(0, when + dur + 8);
         const pan = ctx.createStereoPanner();
-        pan.pan.value = (Math.random() * 2 - 1) * 0.6;
+        pan.pan.value = (rand() * 2 - 1) * 0.6;
         env.connect(pan).connect(this.padFilter);
         [-P.det, P.det].forEach((det, k) => {
           const o = ctx.createOscillator();
           o.type = P.types[k];
           o.frequency.value = fr;
-          o.detune.value = det + (Math.random() - 0.5) * 4;
+          o.detune.value = det + (rand() - 0.5) * 4;
           const og = ctx.createGain(); og.gain.value = P.gains[k];
           o.connect(og).connect(env);
           o.start(when); o.stop(when + dur + 9);
@@ -280,6 +358,11 @@
     string(kind, m){
       const key = kind + m + (this.p.a432 ? 'a' : 'b');
       if(this.strings.has(key)) return this.strings.get(key);
+      const res = seeded(hashStr(key), () => this._string(kind, m));
+      this.strings.set(key, res);
+      return res;
+    }
+    _string(kind, m){
       const ctx = this.ctx, sr = ctx.sampleRate, freq = this.mtof(m);
       const harp = kind === 'harp';
       const s = harp ? 0.5 : 0.1;                         // tanpura: the highs ring on (its jawari buzz)
@@ -292,7 +375,7 @@
       const d = new Float32Array(N);
       let lp = 0;
       const bright = harp ? 0.35 : 0.8;
-      for(let i = 0; i < N; i++){ lp += bright * ((Math.random() * 2 - 1) - lp); d[i] = lp; }
+      for(let i = 0; i < N; i++){ lp += bright * ((rand() * 2 - 1) - lp); d[i] = lp; }
       const P = Math.max(1, Math.round(N * (harp ? 0.18 : 0.08)));
       const e = d.slice();
       let mean = 0;
@@ -313,11 +396,10 @@
         out[i] /= peak || 1;
         if(i > len - fade) out[i] *= (len - i) / fade;
       }
-      const res = { buf, rate: freq / (sr / (N + s)) };
-      this.strings.set(key, res);
-      return res;
+      return { buf, rate: freq / (sr / (N + s)) };
     }
     pluck(kind, m, when, gain, panAmt, dest){
+      if(when < this.cutoff) return;
       const ctx = this.ctx, { buf, rate } = this.string(kind, m);
       const src = ctx.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
       const g = ctx.createGain(); g.gain.value = gain;
@@ -328,9 +410,13 @@
 
     // ------------------------------------------------------------ melody voices
     note(voice, m, when, vel, path){
+      if(when < this.cutoff) return;
+      seeded(hash(this.seed, Math.round((when + this.G0) * 1000), m, 2), () => this._note(voice, m, when, vel, path));
+    }
+    _note(voice, m, when, vel, path){
       const ctx = this.ctx, fr = this.mtof(m);
       const out = ctx.createGain();
-      const pan = ctx.createStereoPanner(); pan.pan.value = (Math.random() * 2 - 1) * 0.7;
+      const pan = ctx.createStereoPanner(); pan.pan.value = (rand() * 2 - 1) * 0.7;
       out.connect(pan).connect(this.melFilter);
       const osc = (type, f) => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; return o; };
       const env = (a, t0, attack, end) => {
@@ -348,7 +434,7 @@
         g.gain.linearRampToValueAtTime(amp, when + 0.002);
         g.gain.exponentialRampToValueAtTime(0.0001, when + len);
         nz.connect(f).connect(g).connect(out);
-        nz.start(when, Math.random() * 1.5); nz.stop(when + len + 0.02);
+        nz.start(when, rand() * 1.5); nz.stop(when + len + 0.02);
       };
 
       if(voice === 'wood'){
@@ -371,7 +457,7 @@
         ng.gain.linearRampToValueAtTime(0.10 * vel, when + 0.002);
         ng.gain.exponentialRampToValueAtTime(0.0001, when + 0.035);
         nz.connect(bp).connect(ng).connect(inner);
-        nz.start(when, Math.random() * 1.5); nz.stop(when + 0.06);
+        nz.start(when, rand() * 1.5); nz.stop(when + 0.06);
       }
 
       else if(voice === 'bowl'){
@@ -456,7 +542,7 @@
         ng.gain.linearRampToValueAtTime(0.05, when + 0.35);
         ng.gain.setTargetAtTime(0, when + dur, 0.2);
         nz.connect(bp).connect(ng).connect(out);
-        nz.start(when, Math.random()); nz.stop(when + dur + 1.6);
+        nz.start(when, rand()); nz.stop(when + dur + 1.6);
       }
 
       if(this.onNote){
@@ -478,19 +564,32 @@
     }
 
     tick(now){
-      const ctx = this.ctx; if(!ctx) return;
-      if(now === undefined) now = ctx.currentTime;
+      if(!this.ctx) return;
+      if(now === undefined) now = this.ctx.currentTime;
+      const prev = RNG; RNG = this.rand;
+      try { this._tick(now); } finally { RNG = prev; }
+    }
+    _tick(now){
+      const ctx = this.ctx;
       const M = this.mood;
       ['nextChordAt', 'nextNoteAt', 'nextBeatAt', 'nextTanpuraAt'].forEach(k => { if(this[k] < now - 1) this[k] = now + 0.3; });
+
+      // interval bells: one soft bowl every few minutes of music, for coming back to the breath
+      const bells = this.p.bells || 0;
+      if(bells && now + 0.5 >= this.nextBellAt){
+        if(this.nextBellAt < now - 1) this.nextBellAt = now + 0.3;
+        this.note('bowl', this.base + 12, this.nextBellAt, 0.9);
+        this.nextBellAt += bells * 60;
+      }
 
       // chords
       if(now + 0.5 >= this.nextChordAt){
         const chords = chordsFor(M);
-        const dur = (14 + Math.random() * 4) * 6 / this.p.breath * M.chordLen;
+        const dur = (14 + rand() * 4) * 6 / this.p.breath * M.chordLen;
         if(chords && M.pad){
           this.chordIndex %= chords.length;
           this.pad(chords[this.chordIndex], this.nextChordAt, dur);
-          this.chordIndex = (this.chordIndex + (Math.random() < 0.75 || chords.length < 5 ? 1 : 2)) % chords.length;
+          this.chordIndex = (this.chordIndex + (rand() < 0.75 || chords.length < 5 ? 1 : 2)) % chords.length;
         }
         this.pattern = null;      // the ostinato finds a new shape with each chord
         this.nextChordAt += dur;
@@ -508,7 +607,7 @@
       }
 
       const d = this.p.melody, voice = this.p.voice, V = VOICES[voice] || VOICES.wood;
-      const vel = () => 0.75 + Math.random() * 0.25;
+      const vel = () => 0.75 + rand() * 0.25;
 
       // earth: a gentle repeating figure, at eight beats per breath
       if(M.motion === 'ostinato'){
@@ -522,7 +621,7 @@
             this.beatIndex = 0;
           }
           const k = this.beatIndex++ % this.pattern.length;
-          if(d >= 0.02 && Math.random() < 0.2 + 0.75 * d) this.note(voice, this.pattern[k], this.nextBeatAt + rnd(0, 0.02), k === 0 ? 0.8 : rnd(0.45, 0.62));
+          if(d >= 0.02 && rand() < 0.2 + 0.75 * d) this.note(voice, this.pattern[k], this.nextBeatAt + rnd(0, 0.02), k === 0 ? 0.8 : rnd(0.45, 0.62));
           this.nextBeatAt += beat;
         }
         return this.natureTick(now);
@@ -534,18 +633,18 @@
 
       const notes = this.melodyNotes();
       const step = V.step * (M.motion === 'raga' ? 1.4 : 1);
-      const r = Math.random();
+      const r = rand();
       const fig = 0.2 + 0.25 * Math.max(0, d - 0.5) * 2;
 
       if(M.motion === 'rise' && r < 0.5){
         // dawn: light arpeggios climbing upward
-        const len = 3 + Math.floor(Math.random() * 3);
+        const len = 3 + Math.floor(rand() * 3);
         let i = Math.floor(rnd(0, Math.max(1, notes.length - len - 1)));
-        for(let k = 0; k < len; k++){ this.note(voice, notes[Math.min(notes.length - 1, i)], t + k * step * 0.75, vel() * (1 - k * 0.08)); i += 1 + (Math.random() < 0.3 ? 1 : 0); }
+        for(let k = 0; k < len; k++){ this.note(voice, notes[Math.min(notes.length - 1, i)], t + k * step * 0.75, vel() * (1 - k * 0.08)); i += 1 + (rand() < 0.3 ? 1 : 0); }
       }
       else if(M.motion === 'phrase' && r < 0.6){
         // soulful: a sung phrase, stepwise, with breath in its rhythm
-        const len = 4 + Math.floor(Math.random() * 3);
+        const len = 4 + Math.floor(rand() * 3);
         let i = Math.floor(rnd(1, notes.length - 1)), at = t;
         for(let k = 0; k < len; k++){
           this.note(voice, notes[i], at, vel() * (k === len - 1 ? 0.85 : 1));
@@ -562,14 +661,14 @@
       }
       else if(M.motion === 'raga'){
         // raga: rising and falling lines through the scale; the flute glides between them
-        const len = 3 + Math.floor(Math.random() * 4);
+        const len = 3 + Math.floor(rand() * 4);
         let i = Math.floor(rnd(0, notes.length - 3)), dir = 1;
         const line = [];
         let at = 0;
         for(let k = 0; k < len; k++){
           line.push([at, notes[i]]);
           at += step * pick([1, 1, 1.5, 2]);
-          if(k === Math.floor(len / 2) && Math.random() < 0.6) dir = -1;
+          if(k === Math.floor(len / 2) && rand() < 0.6) dir = -1;
           i = Math.max(0, Math.min(notes.length - 1, i + dir));
         }
         if(voice === 'flute') this.note('flute', line[0][1], t, vel(), line);
@@ -577,14 +676,14 @@
       }
       else if(r < fig){
         // here: a small falling figure
-        const i0 = 3 + Math.floor(Math.random() * Math.max(1, notes.length - 3));
-        [0, 1, 2].forEach(k => this.note(voice, notes[Math.max(0, Math.min(notes.length - 1, i0 - k * (1 + (Math.random() < 0.5 ? 1 : 0))))], t + k * step, vel()));
+        const i0 = 3 + Math.floor(rand() * Math.max(1, notes.length - 3));
+        [0, 1, 2].forEach(k => this.note(voice, notes[Math.max(0, Math.min(notes.length - 1, i0 - k * (1 + (rand() < 0.5 ? 1 : 0))))], t + k * step, vel()));
       } else {
         this.note(voice, pick(notes), t, vel());
         if(r < fig + 0.25) this.note(voice, pick(notes), t + step * rnd(1.2, 3.6), vel());
       }
 
-      let gap = (4 + Math.random() * 9) * Math.pow(4, (0.5 - d) * 2) / M.density;
+      let gap = (4 + rand() * 9) * Math.pow(4, (0.5 - d) * 2) / M.density;
       if(V.slow) gap = Math.max(gap * 1.25, 3);
       if(M.motion === 'phrase' || M.motion === 'raga') gap *= 1.3;
       this.nextNoteAt += gap;
@@ -595,8 +694,11 @@
     // called every frame with the shared breath, 0..1
     breathe(b){
       if(!this.ctx) return;
+      this.padFilter.frequency.setTargetAtTime(this.breathFreq(b), this.ctx.currentTime, 0.3);
+    }
+    breathFreq(b){
       const L = Math.pow(2, (this.p.light - 0.5) * 3.2) * this.mood.bright;
-      this.padFilter.frequency.setTargetAtTime(Math.min(this.ctx.sampleRate * 0.45, 14000, (450 + 1100 * b * b) * L), this.ctx.currentTime, 0.3);
+      return Math.min(this.ctx.sampleRate * 0.45, 14000, (450 + 1100 * b * b) * L);
     }
 
     // ------------------------------------------------------------ parameters
@@ -619,11 +721,12 @@
       else if(k === 'natureLevel') this.natBus.gain.setTargetAtTime(this.natureGain(), now, 0.4);
       else if(k === 'volume') this.volume.gain.setTargetAtTime(this.volumeGain(), now, 0.15);
       else if(k === 'melody' && v >= 0.02 && prev < 0.02) this.nextNoteAt = now + 1.5;
+      else if(k === 'bells') this.nextBellAt = now + v * 60;
       else if(k === 'voice'){ this.nextNoteAt = Math.min(this.nextNoteAt, now + 1.2); this.pattern = null; }
     }
 
     volumeGain(){ return Math.pow(this.p.volume / 0.8, 2); }
-    natureGain(){ return 1.5 * Math.pow(this.p.natureLevel, 1.6); }
+    natureGain(){ return 0.2 * Math.pow(this.p.natureLevel / 0.5, 2); }   // default: 40% of the first version; up to 4× closer
 
     applyLight(instant){
       const f = Math.min(this.ctx.sampleRate * 0.45, 16000, 9000 * Math.pow(2, (this.p.light - 0.5) * 5.8) * Math.sqrt(this.mood.bright));
@@ -638,40 +741,17 @@
       const dry = 1 - Math.max(0, s - 0.5) * 1.2;
       const set = (g, v) => instant ? (g.gain.value = v) : g.gain.setTargetAtTime(v, this.ctx.currentTime, 0.8);
       set(this.hallWet, hall); set(this.vastWet, vast); set(this.dry, dry);
+      // the long room is costly; only feed it while it can be heard
+      clearTimeout(this.vastT);
+      if(vast > 0 && !this.vastOn){ this.bus.connect(this.vast); this.vastOn = true; }
+      else if(vast === 0 && this.vastOn){
+        const off = () => { this.bus.disconnect(this.vast); this.vastOn = false; };
+        if(instant) off(); else this.vastT = setTimeout(off, 6000);
+      }
     }
 
     // ------------------------------------------------------------ nature: real field recordings
-    loadSound(name){
-      if(this.sounds[name]) return this.sounds[name];
-      return this.sounds[name] = new Promise((resolve, reject) => {
-        const have = () => window.STILL_SOUNDS && window.STILL_SOUNDS[name];
-        if(have()) return resolve(have());
-        const s = document.createElement('script');
-        s.src = 'sounds/' + name + '.js';
-        s.onload = () => have() ? resolve(have()) : reject(new Error('empty ' + name));
-        s.onerror = () => reject(new Error('could not load ' + name));
-        document.head.appendChild(s);
-      }).then(uri => {
-        const bin = atob(uri.slice(uri.indexOf(',') + 1));
-        const bytes = new Uint8Array(bin.length);
-        for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        return new Promise((res, rej) => this.ctx.decodeAudioData(bytes.buffer, res, rej));
-      }).then(buf => this.loopable(buf)).catch(e => { delete this.sounds[name]; throw e; });
-    }
-    // fold the last seconds over the first (equal power), so the recording loops without a seam
-    loopable(buf){
-      const ctx = this.ctx, X = Math.floor(Math.min(4, buf.duration / 6) * buf.sampleRate), L = buf.length - X;
-      const out = ctx.createBuffer(buf.numberOfChannels, L, buf.sampleRate);
-      for(let ch = 0; ch < buf.numberOfChannels; ch++){
-        const a = buf.getChannelData(ch), o = out.getChannelData(ch);
-        o.set(a.subarray(0, L));
-        for(let i = 0; i < X; i++){
-          const t = i / X;
-          o[i] = a[i] * Math.sin(t * Math.PI / 2) + a[L + i] * Math.cos(t * Math.PI / 2);
-        }
-      }
-      return out;
-    }
+    loadSound(name){ return loadNature(name, this.ctx); }
     setNature(kind){
       const ctx = this.ctx, now = ctx.currentTime;
       if(this.nat){
@@ -690,7 +770,7 @@
         const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
         src.connect(g);
         const t = ctx.currentTime;
-        src.start(t, Math.random() * buf.duration * 0.8);
+        src.start(t, rand() * buf.duration * 0.8);
         g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(1, t + 5);
         nat.src = src;
       }).catch(e => console.warn(e));
@@ -736,5 +816,5 @@
     }
   }
 
-  window.Still = { Engine, MOODS, VOICES };
+  window.Still = { Engine, MOODS, VOICES, loadNature };
 })();

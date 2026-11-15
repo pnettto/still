@@ -17,10 +17,12 @@
     <div class="brand">still</div>
     <nav>
       <button id="timer" title="a sitting of fixed length, closed by three bowls">timer <span>∞</span></button>
+      <button id="bells" title="a soft bowl every few minutes, to come back to the breath">bells <span>off</span></button>
       <button id="a432" title="tune to A = 432 Hz instead of 440 Hz">432 hz</button>
       <button id="surprise" title="let it choose for you">surprise</button>
       <button id="reset" title="return to where it began">here</button>
       <button id="share" title="copy a link to this music">share</button>
+      <button id="export" title="save this music as an mp3">export</button>
       <button id="full" title="fullscreen (F)">⤢</button>
     </nav>
   </header>
@@ -31,8 +33,8 @@
       <p id="status">touch to begin</p>
     </div>
 
+    <section id="moments" aria-label="moments"></section>
     <section id="moods" aria-label="mood"></section>
-    <p id="moodline"></p>
 
     <div class="rule"></div>
     <section id="choices"></section>
@@ -44,7 +46,18 @@
 
   <div id="toast"></div>
 
+  <div id="sheet" aria-hidden="true">
+    <div class="card">
+      <p class="title">take this music with you</p>
+      <p class="sub">an mp3 of exactly what you hear now, composed fresh, with a soft beginning and three bowls at the end</p>
+      <div class="opts" id="lengths"></div>
+      <div id="progress"><div class="bar"><i></i></div><p></p></div>
+      <div class="actions"><button id="sheet-go">compose</button><button id="sheet-close">close</button></div>
+    </div>
+  </div>
+
   <script src="audio.js"></script>
+  <script src="export.js"></script>
   <script src="main.js"></script>
 </body>
 </html>
