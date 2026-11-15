@@ -236,10 +236,65 @@
     set('melody', r(0.3, 0.7)); set('drone', r(0.3, 0.7)); set('light', r(0.35, 0.65)); set('space', r(0.4, 0.8));
     toast(MOODS.find(m => m[0] === mode)[2].split(' · ')[0]);
   });
+  // sharing, through Pingo (https://pingo.pnetto.store/llms.txt), a private link shortener.
+  // The key is in this file, so it is public: Pingo only accepts it from this app's domains, and
+  // the worst anyone can do with it is make links, within Pingo's limits.
+  const PINGO = { base: 'https://pingo.pnetto.store', key: 'pingo_877d19aede96eaf154de5b097e6811e25be8c671959121f2' };
+  const timeout = ms => (window.AbortSignal && AbortSignal.timeout) ? AbortSignal.timeout(ms) : undefined;
+  const fnv = text => 'h' + Array.from(text).reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0, 2166136261);
+
+  // one small helper: shorten, or give up quietly and let the caller use the long link
+  async function pingo(url){
+    try {
+      const r = await fetch(PINGO.base + '/api/links', {
+        method: 'POST',
+        headers: { authorization: 'Bearer ' + PINGO.key, 'content-type': 'application/json' },
+        body: JSON.stringify({ url }),
+        signal: timeout(5000),
+      });
+      const data = await r.json().catch(() => ({}));
+      if(!r.ok) throw new Error(r.status + ' ' + (data.error || ''));
+      if(!data.short) throw new Error('no link returned');
+      return data.short;
+    } catch(e){
+      // the page may be offline, opened from a file, or Pingo may be down: the long link still works
+      console.warn('pingo:', e.message);
+      return null;
+    }
+  }
+  const shortLinks = (() => { try { return JSON.parse(localStorage.getItem('still.short') || '{}'); } catch(e) { return {}; } })();
+  function rememberShort(url, short){
+    shortLinks[fnv(url)] = short;
+    const keys = Object.keys(shortLinks);
+    if(keys.length > 50) delete shortLinks[keys[0]];
+    try { localStorage.setItem('still.short', JSON.stringify(shortLinks)); } catch(e) {}
+  }
+  async function copy(text){
+    try { await navigator.clipboard.writeText(text); return true; }
+    catch(e){
+      // older browsers, or a page not served over https
+      const t = document.createElement('textarea');
+      t.value = text; t.setAttribute('readonly', ''); t.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(t); t.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch(e2) {}
+      t.remove();
+      return ok;
+    }
+  }
+
   $('share').addEventListener('click', async () => {
     const url = shareURL();
-    try { await navigator.clipboard.writeText(url); toast('a link to this music is copied'); }
-    catch(e) { history.replaceState(null, '', url); toast('the link is in the address bar'); }
+    let short = shortLinks[fnv(url)];
+    if(!short){
+      short = await pingo(url);
+      if(short) rememberShort(url, short);
+    }
+    if(await copy(short || url)) toast(short ? 'a short link to this music is copied' : 'a link to this music is copied');
+    else {
+      history.replaceState(null, '', url);
+      toast(short ? 'copied link blocked · short link is ' + short.replace(/^https?:\/\//, '') : 'the link is in the address bar');
+    }
   });
   function fullscreen(){
     const el = document.documentElement;

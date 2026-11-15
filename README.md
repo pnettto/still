@@ -24,6 +24,8 @@ A meditation and yoga music maker, grown from the generative music of **here**. 
 
 **Export** saves an MP3 (10, 20, 30 or 60 minutes) of exactly the current settings, composed fresh, with a soft beginning and three bowls at the end. It renders faster than real time.
 
+**Share** copies a short link (`pingo.pnetto.store/ab3de`) through [Pingo](https://pingo.pnetto.store/llms.txt), the owner's link shortener, and remembers it per set of settings. The key lives in `main.js`, so it is public: Pingo only accepts it from this app's domain, and the worst anyone can do with it is create links within Pingo's limits. If Pingo is unreachable, or the page isn't served over https, share quietly falls back to the long link, which always works.
+
 Also: **bells**, a soft bowl every 5, 10, 15 or 20 minutes of music, for coming back to the breath. A sitting timer that ends with three bowls, an optional A = 432 Hz tuning, **surprise**, **here** (back to the beginning) and **share** (copies a link to the exact music). Settings are remembered between visits.
 
 Keys: `space` pause · `h` hide everything · `f` fullscreen · double-click a slider to reset it.
