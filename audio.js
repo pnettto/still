@@ -744,7 +744,7 @@
     }
 
     volumeGain(){ return Math.pow(this.p.volume / 0.8, 2); }
-    natureGain(){ return 0.2 * Math.pow(this.p.natureLevel / 0.5, 2); }   // default: 40% of the first version; up to 4× closer
+    natureGain(){ return 0.12 * Math.pow(this.p.natureLevel / 0.5, 2); }   // default: 60% of the previous level; up to 4× closer
 
     applyLight(instant){
       const f = Math.min(this.ctx.sampleRate * 0.45, 16000, 9000 * Math.pow(2, (this.p.light - 0.5) * 5.8) * Math.sqrt(this.mood.bright));

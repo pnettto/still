@@ -28,8 +28,6 @@
       { mode: 'earth', voice: 'handpan', nature: 'none', pitch: 6, breath: 6, melody: 0.62, drone: 0.5, light: 0.5, space: 0.42, natureLevel: 0.5 }],
     ['focus', 'for work and study: the music of here, by a stream',
       { mode: 'here', voice: 'wood', nature: 'stream', pitch: 7, breath: 6, melody: 0.4, drone: 0.45, light: 0.5, space: 0.4, natureLevel: 0.45 }],
-    ['devotion', 'a tanpura and a gliding flute',
-      { mode: 'raga', voice: 'flute', nature: 'none', pitch: 7, breath: 5.5, melody: 0.55, drone: 0.5, light: 0.5, space: 0.62, natureLevel: 0.5 }],
     ['savasana', 'lying still: slow waves, a singing bowl',
       { mode: 'tender', voice: 'bowl', nature: 'ocean', pitch: 5, breath: 5, melody: 0.3, drone: 0.55, light: 0.38, space: 0.72, natureLevel: 0.5 }],
     ['sleep', 'low and dark, rain, very little happening',
@@ -79,8 +77,8 @@
       fmt: words(['dusk', 'soft', 'warm', 'bright', 'radiant']) },
     { k: 'space', label: 'space', min: 0, max: 1, step: 0.01, title: 'how far the sound travels',
       fmt: words(['close', 'room', 'hall', 'temple', 'sky']) },
-    { k: 'natureLevel', label: 'nearness', min: 0, max: 1, step: 0.01, title: 'how close the nature sound is',
-      fmt: v => state.nature === 'none' ? 'off' : v < 0.02 ? 'silent' : words(['distant', 'far', 'around you', 'near', 'close'])(v) },
+    { k: 'natureLevel', label: 'nature', min: 0, max: 1, step: 0.01, title: 'how loud the nature sound is',
+      fmt: v => state.nature === 'none' ? 'off' : v < 0.02 ? 'silent' : words(['faint', 'soft', 'present', 'full', 'loud'])(v) },
     { k: 'volume', label: 'volume', min: 0, max: 1, step: 0.01, title: 'overall loudness',
       fmt: v => v < 0.01 ? 'silent' : v < 0.2 ? 'whisper' : v < 0.45 ? 'quiet' : v < 0.7 ? 'soft' : v < 0.9 ? 'full' : 'strong' },
   ];
@@ -149,7 +147,7 @@
   // moods
   const moodBtns = MOODS.map(([v, text, line]) => {
     const b = document.createElement('button');
-    b.textContent = text; b.dataset.v = v; b.title = line;
+    b.textContent = text; b.dataset.v = v;
     b.addEventListener('click', () => set('mode', v));
     $('moods').appendChild(b);
     return b;
@@ -163,7 +161,7 @@
     const box = document.createElement('div'); box.className = 'opts';
     const btns = p.options.map(([v, text, title]) => {
       const b = document.createElement('button');
-      b.textContent = text; b.title = title; b.dataset.v = v;
+      b.textContent = text; b.dataset.v = v;
       b.addEventListener('click', () => set(p.k, v));
       box.appendChild(b);
       return b;
@@ -182,7 +180,7 @@
 
   const presetBtns = PRESETS.map(([name, title, values]) => {
     const b = document.createElement('button');
-    b.textContent = name; b.title = title;
+    b.textContent = name;
     b.addEventListener('click', () => applyPreset(name, values, b));
     presetsBox.appendChild(b);
     return b;
@@ -204,10 +202,9 @@
   // sliders
   SLIDERS.forEach(p => {
     const row = document.createElement('div'); row.className = 'slider';
-    const label = document.createElement('label'); label.textContent = p.label; label.title = p.title;
+    const label = document.createElement('label'); label.textContent = p.label;
     const input = document.createElement('input');
     Object.assign(input, { type: 'range', min: p.min, max: p.max, step: p.step });
-    input.title = p.title;
     input.setAttribute('aria-label', p.label);
     const out = document.createElement('output');
     input.addEventListener('input', () => set(p.k, parseFloat(input.value)));
@@ -241,26 +238,33 @@
   let feedbackT;
 
   function place(el, bubble, below){
-    const r = el.getBoundingClientRect();
     bubble.style.left = '0px'; bubble.style.top = '0px';
     const bw = bubble.offsetWidth, bh = bubble.offsetHeight;
-    let x = r.left + r.width / 2 - bw / 2;
-    let y = below ? r.bottom + 10 : r.top - bh - 10;
-    if(!below && y < 8) y = r.bottom + 10;
-    if(below && y + bh > window.innerHeight - 8) y = r.top - bh - 10;
+    let x, y;
+    if(el){
+      const r = el.getBoundingClientRect();
+      x = r.left + r.width / 2 - bw / 2;
+      y = below ? r.bottom + 10 : r.top - bh - 10;
+      if(!below && y < 8) y = r.bottom + 10;
+      if(below && y + bh > window.innerHeight - 8) y = r.top - bh - 10;
+    } else {
+      x = window.innerWidth / 2 - bw / 2;
+      y = 96;
+    }
     x = Math.max(8, Math.min(window.innerWidth - bw - 8, x));
     bubble.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
   }
 
   // feedback appears right beside the control you touched — never at the bottom
   function feedback(anchor, html, ms){
+    hideTip();
     feedbackEl.innerHTML = html; place(anchor, feedbackEl, false); feedbackEl.classList.add('on');
     clearTimeout(feedbackT); feedbackT = setTimeout(() => feedbackEl.classList.remove('on'), ms || 2600);
   }
 
   // tooltips: the same quiet copy as before, but immediate and styled
-  document.querySelectorAll('[title]').forEach(el => { el.dataset.tip = el.title; el.removeAttribute('title'); });
-  function showTip(el){ const t = el.dataset.tip; if(!t) return; tipEl.textContent = t; place(el, tipEl, false); tipEl.classList.add('on'); }
+  document.querySelectorAll('#top [title]').forEach(el => { el.dataset.tip = el.title; el.removeAttribute('title'); });
+  function showTip(el){ if(feedbackEl.classList.contains('on')) return; const t = el.dataset.tip; if(!t) return; tipEl.textContent = t; place(el, tipEl, false); tipEl.classList.add('on'); }
   function hideTip(){ tipEl.classList.remove('on'); }
   document.addEventListener('mouseover', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if(el) showTip(el); else hideTip(); });
   document.addEventListener('mouseout', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if(el && !el.contains(e.relatedTarget)) hideTip(); });
@@ -521,6 +525,7 @@
       if(aboutEl.classList.contains('open')) closeAbout();
       else if(sheet.classList.contains('open')) closeSheet();
     }
+    else if(k === 'h'){ body.classList.toggle('hidden'); if(body.classList.contains('hidden')) feedback(null, 'h · to return', 1800); }
   });
 
   // ------------------------------------------------------------ the sky: a quiet wash of colour
