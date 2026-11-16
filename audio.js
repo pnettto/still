@@ -105,10 +105,11 @@
   }
 
   // decoded nature recordings, shared by every engine (live, and each export chunk)
-  const SOUNDS = {};
-  function loadNature(name, ctx){
-    if(SOUNDS[name]) return SOUNDS[name];
-    return SOUNDS[name] = new Promise((resolve, reject) => {
+  // the recordings arrive as scripts (so the app also works from a file); decoded per sample rate
+  const SOUNDS = {}, SCRIPTS = {};
+  function natureScript(name){
+    if(SCRIPTS[name]) return SCRIPTS[name];
+    return SCRIPTS[name] = new Promise((resolve, reject) => {
       const have = () => window.STILL_SOUNDS && window.STILL_SOUNDS[name];
       if(have()) return resolve(have());
       const s = document.createElement('script');
@@ -116,12 +117,28 @@
       s.onload = () => have() ? resolve(have()) : reject(new Error('empty ' + name));
       s.onerror = () => reject(new Error('could not load ' + name));
       document.head.appendChild(s);
-    }).then(uri => {
+    }).catch(e => { delete SCRIPTS[name]; throw e; });
+  }
+  function decodeNature(name, ctx){
+    return natureScript(name).then(uri => {
       const bin = atob(uri.slice(uri.indexOf(',') + 1));
       const bytes = new Uint8Array(bin.length);
       for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       return new Promise((res, rej) => ctx.decodeAudioData(bytes.buffer, res, rej));
-    }).then(loopable).catch(e => { delete SOUNDS[name]; throw e; });
+    }).then(loopable);
+  }
+  function loadNature(name, ctx){
+    const key = name + '@' + ctx.sampleRate;
+    if(SOUNDS[key]) return SOUNDS[key];
+    return SOUNDS[key] = decodeNature(name, ctx).catch(e => { delete SOUNDS[key]; throw e; });
+  }
+  // for the synth: 16-bit samples at a given rate, not kept here (the worker holds the only copy)
+  function loadNatureData(name, rate){
+    return decodeNature(name, new OfflineAudioContext(2, 1, rate)).then(buf => [0, 1].map(c => {
+      const d = buf.getChannelData(Math.min(c, buf.numberOfChannels - 1)), o = new Int16Array(d.length);
+      for(let i = 0; i < d.length; i++){ const x = Math.max(-1, Math.min(1, d[i])); o[i] = x < 0 ? x * 32768 : x * 32767; }
+      return o;
+    }));
   }
   // fold the last seconds over the first (equal power), so the recording loops without a seam
   function loopable(buf){
@@ -228,9 +245,17 @@
       this.melFilter.type = 'lowpass'; this.melFilter.Q.value = 0.3;
       this.melFilter.connect(this.bus);
 
-      // nature sits outside the music's rooms: the recordings carry their own space
+      // nature: its highs (hiss, splashes) lowered, a little of it in the music's hall, and into the
+      // same compressor as the music, so the two are glued together. low + shelf · (all − low)
       this.natBus = ctx.createGain(); this.natBus.gain.value = this.natureGain();
-      this.natBus.connect(this.volume);
+      const natLow = ctx.createBiquadFilter(); natLow.type = 'lowpass'; natLow.frequency.value = 2000; natLow.Q.value = -3.0103;
+      this.natHigh = ctx.createGain(); this.natNeg = ctx.createGain();
+      const natOut = ctx.createGain();
+      this.natBus.connect(natLow).connect(natOut);
+      this.natBus.connect(this.natHigh).connect(natOut);
+      natLow.connect(this.natNeg).connect(natOut);
+      natOut.connect(comp);
+      if(!this.noRooms){ const send = ctx.createGain(); send.gain.value = 0.35; natOut.connect(send); send.connect(this.hall); send.connect(this.vast); }
 
       const len = ctx.sampleRate * 2;
       this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -294,6 +319,18 @@
       this.droneLevel.gain.value = this.droneGain();
       const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 320;
       g.connect(f).connect(this.droneLevel).connect(this.bus);
+      // the overtones of the lowest voice, between about 200 and 700 Hz: phone speakers can't play the
+      // drone's fundamental, but the ear hears it in its overtones (as in synth.js)
+      const [m0, g0] = this.droneSpec()[0];
+      const fade = ctx.createGain();
+      if(this.exporting && this.G0 > 0) fade.gain.value = 0.10;
+      else { fade.gain.setValueAtTime(0, ctx.currentTime); fade.gain.linearRampToValueAtTime(0.10, ctx.currentTime + 14); }
+      this.ovOsc = ctx.createOscillator(); this.ovOsc.type = 'sawtooth'; this.ovOsc.frequency.value = this.mtof(m0);
+      this.ovGain = ctx.createGain(); this.ovGain.gain.value = 0.8 * g0;
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 380; bp.Q.value = 0.8;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 800; lp.Q.value = 0;
+      this.ovOsc.connect(this.ovGain).connect(fade).connect(bp).connect(lp).connect(this.droneLevel);
+      this.ovOsc.start(0);
       this.droneVoices = this.droneSpec().map(([m, gain], i) => {
         const o = ctx.createOscillator();
         o.type = i === 0 ? 'sine' : 'triangle';
@@ -318,6 +355,7 @@
       this.droneSpec().forEach(([m, gain], i) => {
         this.droneVoices[i].o.frequency.setTargetAtTime(this.mtof(m), now, tc);
         this.droneVoices[i].og.gain.setTargetAtTime(gain, now, tc);
+        if(i === 0){ this.ovOsc.frequency.setTargetAtTime(this.mtof(m), now, tc); this.ovGain.gain.setTargetAtTime(0.8 * gain, now, tc); }
       });
     }
 
@@ -770,6 +808,9 @@
       const f = Math.min(this.ctx.sampleRate * 0.45, 16000, 9000 * Math.pow(2, (this.p.light - 0.5) * 5.8) * Math.sqrt(this.mood.bright));
       if(instant) this.melFilter.frequency.value = f;
       else this.melFilter.frequency.setTargetAtTime(f, this.ctx.currentTime, 0.4);
+      // nature's highs: 6 dB lower at the middle of light, 10 dB at dusk, 2 dB when radiant
+      const shelf = Math.pow(10, (-6 + 8 * (this.p.light - 0.5)) / 20);
+      [[this.natHigh, shelf], [this.natNeg, -shelf]].forEach(([g, v]) => instant ? (g.gain.value = v) : g.gain.setTargetAtTime(v, this.ctx.currentTime, 0.4));
     }
 
     applySpace(instant){
@@ -889,5 +930,5 @@
     }
   }
 
-  window.Still = { Engine, MOODS, VOICES, loadNature };
+  window.Still = { Engine, MOODS, VOICES, loadNature, loadNatureData };
 })();

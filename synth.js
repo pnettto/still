@@ -7,7 +7,11 @@
 function StillSynthModule(G){
   'use strict';
   const BLOCK = 512;
-  const HARP_GAIN = 0.092;          // the softened harp at the level of the old one                 // frames per internal block (also the reverb's first partition)
+  const HARP_GAIN = 0.092;
+  // the level of the drone's overtones beside its lowest voice
+  const OVERTONES = 0.8;
+  // nature: where its highs begin, how much of it reaches the music's rooms
+  const NAT_SPLIT = 2000, NAT_SEND = 0.35;          // the softened harp at the level of the old one                 // frames per internal block (also the reverb's first partition)
 
   // ------------------------------------------------------------ harmony (as in audio.js)
   const HERE_CHORDS = [
@@ -631,6 +635,9 @@ function StillSynthModule(G){
       this.padBus = { L: B(), R: B() }; this.tanBus = { L: B(), R: B() }; this.melBus = { L: B(), R: B() };
       this.busL = B(); this.busR = B(); this.mL = B(); this.mR = B();
       this.roomOut = [[B(), B()], [B(), B()]];
+      this.mobile = !!opts.mobile;
+      this.nL = B(); this.nR = B(); this.loL = B(); this.loR = B(); this.rL = B(); this.rR = B();
+      this.natItems = []; this.shelf = this.shelfGain(); this.nEnv = 0; this.nMean = 0; this.nGr = 1;
       this.build();
     }
     get now(){ return this.frame / this.sr; }
@@ -658,6 +665,8 @@ function StillSynthModule(G){
       this.padLevel = new Param(this, this.mood.padLevel || 1);
       this.tanFilter = new Biquad(this, 'lowpass', 1600, 1, 2);
       this.melFilter = new Biquad(this, 'lowpass', 350, 0.3, 2);
+      this.natLevel = new Param(this, this.natureGain());
+      this.natSplit = new Biquad(this, 'lowpass', NAT_SPLIT, -3.0103, 2);
       this.drone();
       this.applySpace(true);
       this.applyLight(true);
@@ -706,6 +715,18 @@ function StillSynthModule(G){
         o.start(0); lfo.start(0);
         return { o, og };
       });
+      // the overtones of the lowest voice: phone speakers can't play the drone's fundamental, but the
+      // ear hears it in its overtones; through headphones they only add a little body
+      const [m0, g0] = this.droneSpec()[0];
+      const fade = new Gain(this, 0);
+      fade.gain.setValueAtTime(0, 0);
+      fade.gain.linearRampToValueAtTime(0.10, 14);
+      // every harmonic, kept only between about 200 and 700 Hz, whatever the pitch
+      this.ovOsc = new Osc(this, 'sawtooth', this.mtof(m0));
+      this.ovGain = new Gain(this, OVERTONES * g0);
+      this.ovOsc.connect(this.ovGain).connect(fade).connect(new Biquad(this, 'bandpass', 380, 0.8))
+        .connect(new Biquad(this, 'lowpass', 800, 0)).connect(this.droneLevel);
+      this.ovOsc.start(0);
     }
     droneGain(){
       const d = this.p.drone, low = 1 - 0.045 * Math.max(0, 7 - this.p.pitch);
@@ -716,6 +737,7 @@ function StillSynthModule(G){
       this.droneSpec().forEach(([m, gain], i) => {
         this.droneVoices[i].o.frequency.setTargetAtTime(this.mtof(m), now, tc);
         this.droneVoices[i].og.gain.setTargetAtTime(gain, now, tc);
+        if(i === 0){ this.ovOsc.frequency.setTargetAtTime(this.mtof(m), now, tc); this.ovGain.gain.setTargetAtTime(OVERTONES * gain, now, tc); }
       });
     }
 
@@ -1108,6 +1130,61 @@ function StillSynthModule(G){
       else if(k === 'melody' && v >= 0.02 && prev < 0.02) this.nextNoteAt = now + 1.5;
       else if(k === 'bells') this.nextBellAt = now + v * 60;
       else if(k === 'voice'){ this.nextNoteAt = Math.min(this.nextNoteAt, now + 1.2); this.pattern = null; }
+      else if(k === 'natureLevel') this.natLevel.setTargetAtTime(this.natureGain(), now, 0.4);
+      else if(k === 'nature' && (!v || v === 'none')) this.setNatureData(null);
+    }
+    // phones: no bass to carry the music, but nature's hiss comes through whole, so it sits lower there
+    natureGain(){ return 0.12 * Math.pow(this.p.natureLevel / 0.5, 2) * (this.mobile ? 0.35 : 1); }
+    // nature's highs, lowered: by 6 dB at the middle of light, 10 dB at dusk, 2 dB when radiant
+    shelfGain(){ return Math.pow(10, (-6 + 8 * (this.p.light - 0.5)) / 20); }
+
+    // ------------------------------------------------------------ nature: a field recording, warmed and set in the music's hall
+    // L, R: 16-bit samples at this rate, already loopable. The old recording fades out as the new one arrives.
+    setNatureData(L, R, offset, fade){
+      const now = this.now;
+      this.natItems.forEach(it => {
+        if(it.out) return;
+        it.gain.cancelAndHoldAtTime(now); it.gain.linearRampToValueAtTime(0, now + 4); it.out = now + 4;
+      });
+      if(!L) return;
+      const g = new Param(this, 0);
+      if(fade > 0){ g.setValueAtTime(0, now); g.linearRampToValueAtTime(1, now + fade); } else g.value = 1;
+      this.natItems.push({ L, R: R || L, len: L.length, pos: Math.floor((offset || 0) * this.sr) % L.length, gain: g, out: 0 });
+    }
+    natureBlock(){
+      const now = this.now;
+      this.natItems = this.natItems.filter(it => !(it.out && now > it.out + 0.1));
+      if(!this.natItems.length){ this.natLevel.process(); return false; }
+      const nL = this.nL, nR = this.nR; nL.fill(0); nR.fill(0);
+      for(const it of this.natItems){
+        const g = it.gain.process(), L = it.L, R = it.R, len = it.len;
+        let p = it.pos;
+        for(let i = 0; i < BLOCK; i++){ const k = g[i] / 32768; nL[i] += L[p] * k; nR[i] += R[p] * k; if(++p >= len) p = 0; }
+        it.pos = p;
+      }
+      // split at 2 kHz: the lows pass whole; the highs (hiss, splashes, chirps) are lowered, and their
+      // sudden peaks softened, measured against the recording's own usual level so it suits any of them
+      const lo = this.loL, loR = this.loR;
+      lo.set(nL); loR.set(nR);
+      const sf = this.splitF || (this.splitF = new Float32Array(BLOCK).fill(NAT_SPLIT));
+      this.natSplit.run(lo, lo, 0, sf, true); this.natSplit.run(loR, loR, 1, sf, true);
+      this.shelf += (this.shelfGain() - this.shelf) * 0.05;
+      const lv = this.natLevel.process(), sr = this.sr, shelf = this.shelf;
+      const eA = 1 - Math.exp(-1 / (0.001 * sr)), eR = 1 - Math.exp(-1 / (0.06 * sr)), eM = 1 - Math.exp(-1 / (4 * sr));
+      const gA = 1 - Math.exp(-1 / (0.002 * sr)), gR = 1 - Math.exp(-1 / (0.1 * sr));
+      let env = this.nEnv, mean = this.nMean, gr = this.nGr;
+      for(let i = 0; i < BLOCK; i++){
+        const hL = nL[i] - lo[i], hR = nR[i] - loR[i];
+        const a = Math.max(Math.abs(hL), Math.abs(hR));
+        env += (a - env) * (a > env ? eA : eR);
+        mean += (env - mean) * eM;
+        const T = mean * 2.5 + 1e-7, want = env > T ? Math.pow(T / env, 0.667) : 1;
+        gr += (want - gr) * (want < gr ? gA : gR);
+        const hg = shelf * gr, v = lv[i];
+        nL[i] = (lo[i] + hL * hg) * v; nR[i] = (loR[i] + hR * hg) * v;
+      }
+      this.nEnv = env; this.nMean = mean; this.nGr = gr;
+      return true;
     }
     applyLight(instant){
       const f = Math.min(this.sr * 0.45, 16000, 9000 * Math.pow(2, (this.p.light - 0.5) * 5.8) * Math.sqrt(this.mood.bright));
@@ -1174,7 +1251,14 @@ function StillSynthModule(G){
       }
       // rooms
       if(this.vastOffAt !== undefined && this.now > this.vastOffAt){ this.rooms.rooms[1].on = false; this.vastOn = false; this.vastOffAt = undefined; }
-      this.rooms.process(bL, bR, this.roomOut);
+      // nature joins the music in its rooms and in the compressor, so the two are glued together
+      const nat = this.natureBlock(), nL = this.nL, nR = this.nR;
+      let rL = bL, rR = bR;
+      if(nat){
+        rL = this.rL; rR = this.rR;
+        for(let i = 0; i < BLOCK; i++){ rL[i] = bL[i] + NAT_SEND * nL[i]; rR[i] = bR[i] + NAT_SEND * nR[i]; }
+      }
+      this.rooms.process(rL, rR, this.roomOut);
       const [hL, hR] = this.roomOut[0], [vL, vR] = this.roomOut[1];
       const hw = this.hallWet.process(), vw = this.vastWet.process(), dw = this.dry.process(), ms = this.master.process();
       const oL = this.mL, oR = this.mR;
@@ -1182,6 +1266,7 @@ function StillSynthModule(G){
         oL[i] = (bL[i] * dw[i] + hL[i] * hw[i] + vL[i] * vw[i]) * ms[i];
         oR[i] = (bR[i] * dw[i] + hR[i] * hw[i] + vR[i] * vw[i]) * ms[i];
       }
+      if(nat) for(let i = 0; i < BLOCK; i++){ oL[i] += nL[i] * ms[i]; oR[i] += nR[i] * ms[i]; }
       this.comp.process(oL, oR, BLOCK);
       // the sources that have finished
       if(this.blk % 16 === 0) this.sources = this.sources.filter(s => s.stopF > k0);

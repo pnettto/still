@@ -1,6 +1,6 @@
 // STILL — live playback: the synth runs in a Worker, a little ahead of time, and streams into a tiny
 // AudioWorklet that only copies samples. A slow phone then just drains the buffer a little instead
-// of glitching. Volume, nature and pauses stay native (after the player), so they answer at once.
+// of glitching. Volume and pauses stay native (after the player), so they answer at once; nature is part of the synth.
 
 (function(){
   if(!window.StillSynthModule && typeof StillSynthModule === 'undefined') return;
@@ -27,7 +27,7 @@
       const m = e.data;
       if(m.type === 'init'){
         depth = m.depth; maxDepth = m.maxDepth;
-        synth = new self.StillSynth.Synth(m.p, { seed: m.seed, sr: m.sr, onNote: (t, info) => self.postMessage({ type: 'note', t, info }) });
+        synth = new self.StillSynth.Synth(m.p, { seed: m.seed, sr: m.sr, mobile: m.mobile, onNote: (t, info) => self.postMessage({ type: 'note', t, info }) });
         port = m.port;
         port.onmessage = ev => {
           const d = ev.data;
@@ -43,6 +43,7 @@
         while(inFlight < depth) send(null);
       }
       else if(m.type === 'set') synth.set(m.k, m.v);
+      else if(m.type === 'nature') synth.setNatureData(m.L, m.R, Math.random() * m.L.length / synth.sr * 0.8, m.fade);
       else if(m.type === 'closing') self.postMessage({ type: 'closing', t: synth.closing() });
       else if(m.type === 'afterClosing') synth.afterClosing();
     };
@@ -96,7 +97,6 @@
       this.ctx = null; this.onNote = null; this.paused = false;
       this.report = null; this.depth = MOBILE ? 16 : 6;
     }
-    natureGain(){ return 0.12 * Math.pow(this.p.natureLevel / 0.5, 2) * (MOBILE ? 0.35 : 1); }
     volumeGain(){ return Math.pow(this.p.volume / 0.8, 2); }
 
     start(){
@@ -114,8 +114,6 @@
       }
       limit.curve = curve;
       this.music.connect(this.volume).connect(limit).connect(ctx.destination);
-      this.natBus = ctx.createGain(); this.natBus.gain.value = this.natureGain();
-      this.natBus.connect(this.volume);
       this.music.gain.setValueAtTime(0, now);
       this.music.gain.linearRampToValueAtTime(1, now + 10);
 
@@ -125,7 +123,7 @@
       this.worker.onmessage = e => this.fromWorker(e.data);
       this.worker.onerror = e => console.warn('still worker:', e.message);
       const ch = new MessageChannel();
-      this.worker.postMessage({ type: 'init', p: this.p, seed: Math.floor(Math.random() * 2 ** 31), sr: ctx.sampleRate,
+      this.worker.postMessage({ type: 'init', p: this.p, seed: Math.floor(Math.random() * 2 ** 31), sr: ctx.sampleRate, mobile: MOBILE,
         depth: this.depth, maxDepth: 48, port: ch.port1 }, [ch.port1]);
       ctx.audioWorklet.addModule(playerURL).then(() => {
         const node = this.node = new AudioWorkletNode(ctx, 'still-player', { numberOfInputs: 0, outputChannelCount: [2] });
@@ -171,33 +169,17 @@
       if(!this.ctx || prev === v) return;
       const now = this.ctx.currentTime;
       if(k === 'nature') this.setNature(v);
-      else if(k === 'natureLevel') this.natBus.gain.setTargetAtTime(this.natureGain(), now, 0.4);
       else if(k === 'volume') this.volume.gain.setTargetAtTime(this.volumeGain(), now, 0.15);
       this.worker.postMessage({ type: 'set', k, v });
     }
 
-    // nature: real field recordings, a native loop after the player (as in audio.js)
+    // nature: the recording is decoded here and handed to the synth, which warms it, sets it in the
+    // music's hall and glues it to the music; the old one fades out as the new one arrives
     setNature(kind){
-      const ctx = this.ctx, now = ctx.currentTime;
-      if(this.nat){
-        const old = this.nat;
-        old.g.gain.cancelScheduledValues(now);
-        old.g.gain.setValueAtTime(old.g.gain.value, now);
-        old.g.gain.linearRampToValueAtTime(0, now + 4);
-        setTimeout(() => { try { old.src && old.src.stop(); } catch(e) {} old.g.disconnect(); }, 4500);
-        this.nat = null;
-      }
-      if(!kind || kind === 'none') return;
-      const g = ctx.createGain(); g.gain.value = 0; g.connect(this.natBus);
-      const nat = this.nat = { kind, g, src: null };
-      window.Still.loadNature(kind, ctx).then(buf => {
-        if(this.nat !== nat) return;
-        const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
-        src.connect(g);
-        const t = ctx.currentTime;
-        src.start(t, Math.random() * buf.duration * 0.8);
-        g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(1, t + (MOBILE ? 20 : 5));
-        nat.src = src;
+      if(!kind || kind === 'none') return;      // the synth fades it out itself
+      window.Still.loadNatureData(kind, this.ctx.sampleRate).then(([L, R]) => {
+        if(this.p.nature !== kind) return;
+        this.worker.postMessage({ type: 'nature', L, R, fade: MOBILE ? 20 : 5 }, [L.buffer, R.buffer]);
       }).catch(e => console.warn(e));
     }
 
@@ -219,7 +201,7 @@
       if(!this.ctx || this.paused) return;
       this.paused = true;
       const now = this.ctx.currentTime;
-      [this.music.gain, this.natBus.gain].forEach(p => { p.cancelScheduledValues(now); p.setValueAtTime(p.value, now); p.linearRampToValueAtTime(0, now + 2.5); });
+      const p = this.music.gain; p.cancelScheduledValues(now); p.setValueAtTime(p.value, now); p.linearRampToValueAtTime(0, now + 2.5);
       clearTimeout(this.suspendT);
       this.suspendT = setTimeout(() => { if(this.paused) this.ctx.suspend(); }, 2700);
     }
@@ -229,9 +211,7 @@
       this.paused = false;
       this.ctx.resume().then(() => {
         const now = this.ctx.currentTime;
-        [[this.music.gain, 1], [this.natBus.gain, this.natureGain()]].forEach(([p, v]) => {
-          p.cancelScheduledValues(now); p.setValueAtTime(p.value, now); p.linearRampToValueAtTime(v, now + 3);
-        });
+        const p = this.music.gain; p.cancelScheduledValues(now); p.setValueAtTime(p.value, now); p.linearRampToValueAtTime(1, now + 3);
       });
     }
     // the end of a sitting: the synth places three bowls; the fades follow them when they are heard
@@ -240,12 +220,10 @@
       this.onClosing = t => {
         this.onClosing = null;
         const at = Math.max(this.ctx.currentTime, this.toCtxTime(t));
-        [this.music.gain, this.natBus.gain].forEach(g => {
-          const now = this.ctx.currentTime;
-          g.cancelScheduledValues(now); g.setValueAtTime(g.value, now);
-          g.setValueAtTime(g.value, at + 15);
-          g.linearRampToValueAtTime(0, at + 34);
-        });
+        const g = this.music.gain, now = this.ctx.currentTime;
+        g.cancelScheduledValues(now); g.setValueAtTime(g.value, now);
+        g.setValueAtTime(g.value, at + 15);
+        g.linearRampToValueAtTime(0, at + 34);
         setTimeout(() => {
           this.paused = true; this.ctx.suspend();
           this.worker.postMessage({ type: 'afterClosing' });

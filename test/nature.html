@@ -1,0 +1,38 @@
+<!doctype html><meta charset="utf-8"><title>still: nature, before and after</title>
+<base href="../"><script src="audio.js"></script><script src="synth.js"></script>
+<pre id="out">rendering…</pre>
+<script>
+// Each recording raw (at its level in the mix) against what the synth makes of it (warmed, splashes
+// softened, a little hall, the compressor), music silenced. 30 s each; ?light=0.5&space=0.5
+const q = new URLSearchParams(location.search), SR = 44100, SECS = 30;
+const P = { mode: 'here', voice: 'wood', nature: 'none', pitch: 7, a432: false, breath: 6, melody: 0, drone: 0, light: +(q.get('light') || 0.5), space: +(q.get('space') || 0.5), natureLevel: 0.5, volume: 0.8, bells: 0 };
+async function measure(L){
+  const buf = new AudioBuffer({ length: L.length, sampleRate: SR, numberOfChannels: 1 }); buf.copyToChannel(L, 0);
+  const res = {};
+  for(const [k, f] of [['all', 0], ['hi', 1500]]){
+    const c = new OfflineAudioContext(1, L.length, SR), s = c.createBufferSource(); s.buffer = buf; let n = s;
+    if(f) for(let i = 0; i < 4; i++){ const h = c.createBiquadFilter(); h.type = 'highpass'; h.frequency.value = f; h.Q.value = -3.0103; n.connect(h); n = h; }
+    n.connect(c.destination); s.start();
+    const d = (await c.startRendering()).getChannelData(0); let e = 0, pk = 0; for(const x of d){ e += x * x; pk = Math.max(pk, Math.abs(x)); }
+    res[k] = e / d.length; res[k + 'pk'] = pk;
+  }
+  const dB = x => 10 * Math.log10(x);
+  return { level: dB(res.all), highs: dB(res.hi), crestHi: 20 * Math.log10(res.hipk) - dB(res.hi) };
+}
+(async () => {
+  const rows = ['recording   level (raw → now)   highs >1.5k (raw → now)   splashiness of highs, peak/rms (raw → now)'];
+  for(const name of ['ocean', 'rain', 'stream', 'forest', 'night']){
+    const [Li, Ri] = await Still.loadNatureData(name, SR);
+    const n = 512 * Math.ceil(SR * SECS / 512), off = Math.floor(SR * 2);
+    const raw = new Float32Array(SR * SECS), ng = 0.12;
+    for(let i = 0; i < raw.length; i++) raw[i] = Li[(off + i) % Li.length] / 32768 * ng;
+    const s = new StillSynth.Synth(P, { seed: 1, sr: SR }); s.padLevel.value = 0;
+    s.setNatureData(Li, Ri, off / SR, 0);
+    const L = new Float32Array(n), R = new Float32Array(n); s.render(L, R, n);
+    const a = await measure(raw), b = await measure(L.subarray(0, raw.length));
+    const f = x => x.toFixed(1).padStart(6);
+    rows.push(`${name.padEnd(10)} ${f(a.level)} → ${f(b.level)} dB    ${f(a.highs)} → ${f(b.highs)} dB          ${f(a.crestHi)} → ${f(b.crestHi)} dB`);
+  }
+  window.RESULT = rows.join('\n'); document.getElementById('out').textContent = window.RESULT; window.DONE = true;
+})();
+</script>

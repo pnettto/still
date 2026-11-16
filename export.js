@@ -134,24 +134,16 @@
       const S = self.StillSynth, s = new S.Synth(p, { seed, sr });
       const env = g => Math.min(1, g / FADE_IN_) * Math.min(1, Math.max(0, (total - g) / FADE_OUT_));
       s.master.setValueAtTime(env(0), 0);
-      for(let t = 0.5; t <= total + 0.5; t += 0.5) s.master.linearRampToValueAtTime(env(t), t);
+      for(let t = 0.5; t <= total + 0.5; t += 0.5) s.master.linearRampToValueAtTime(env(t), t);   // shapes nature too
+      if(nature) s.setNatureData(nature[0], nature[1], natOffset, 0);
       [26, 19, 12].forEach((sec, i) => { const t = total - sec; if(t >= 0) s.note('bowl', s.base + 12 + (i === 1 ? 7 : 0), t, 1); });
-      const ng = 0.12 * Math.pow(p.natureLevel / 0.5, 2), vol = Math.pow(p.volume / 0.8, 2);
+      const vol = Math.pow(p.volume / 0.8, 2);
       const N = Math.ceil(total * sr), STEP = S.BLOCK * 64;
-      let natPos = nature ? Math.round(natOffset * sr) % nature[0].length : 0;
       for(let f = 0; f < N; f += STEP){
         const n = Math.min(STEP, N - f), m = Math.ceil(n / S.BLOCK) * S.BLOCK;
         const L = new Float32Array(m), R = new Float32Array(m);
         s.render(L, R, m);
-        for(let i = 0; i < n; i++){
-          let l = L[i], r = R[i];
-          if(nature){
-            const k = env((f + i) / sr) * ng;
-            l += nature[0][natPos] * k; r += nature[1][natPos] * k;
-            if(++natPos >= nature[0].length) natPos = 0;
-          }
-          L[i] = S.softClip(l * vol); R[i] = S.softClip(r * vol);
-        }
+        for(let i = 0; i < n; i++){ L[i] = S.softClip(L[i] * vol); R[i] = S.softClip(R[i] * vol); }
         const l = L.slice(0, n), r = R.slice(0, n);
         self.postMessage({ L: l, R: r, done: f + n >= N, at: (f + n) / N }, [l.buffer, r.buffer]);
       }
@@ -165,9 +157,8 @@
     const seed = fixedSeed !== undefined ? fixedSeed : Math.floor(Math.random() * 2 ** 31);
     let nature = null, natOffset = 0;
     if(p.nature && p.nature !== 'none'){
-      const buf = await window.Still.loadNature(p.nature, new OfflineAudioContext(2, 1, SR));
-      nature = [0, 1].map(c => buf.getChannelData(Math.min(c, buf.numberOfChannels - 1)).slice());
-      natOffset = (seed % 1000) / 1000 * buf.duration;
+      nature = await window.Still.loadNatureData(p.nature, SR);
+      natOffset = (seed % 1000) / 1000 * nature[0].length / SR;
     }
     workerURL = workerURL || URL.createObjectURL(new Blob([`(${window.StillSynthModule})(self);\nconst FADE_IN_ = ${FADE_IN}, FADE_OUT_ = ${FADE_OUT};\n(${exportWorker})();`], { type: 'application/javascript' }));
     const w = new Worker(workerURL);
@@ -175,7 +166,7 @@
     const queue = []; let wake = null, failed = null;
     w.onmessage = e => { queue.push(e.data); if(wake){ wake(); wake = null; } };
     w.onerror = e => { failed = new Error(e.message || 'export failed'); if(wake){ wake(); wake = null; } };
-    w.postMessage({ p, total, seed, sr: SR, nature, natOffset });
+    w.postMessage({ p, total, seed, sr: SR, nature, natOffset }, nature ? [nature[0].buffer, nature[1].buffer] : []);
     const l16 = new Int16Array(1152 * 40), r16 = new Int16Array(1152 * 40);
     try {
       for(;;){
