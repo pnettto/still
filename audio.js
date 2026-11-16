@@ -221,7 +221,7 @@
       this.padFilter.connect(this.padLevel).connect(this.bus);
 
       this.tanpuraBus = ctx.createBiquadFilter();
-      this.tanpuraBus.type = 'lowpass'; this.tanpuraBus.frequency.value = 3400;
+      this.tanpuraBus.type = 'lowpass'; this.tanpuraBus.frequency.value = 1600;
       this.tanpuraBus.connect(this.bus);
 
       this.melFilter = ctx.createBiquadFilter();
@@ -384,7 +384,7 @@
     _string(kind, m){
       const ctx = this.ctx, sr = ctx.sampleRate, freq = this.mtof(m);
       const harp = kind === 'harp';
-      const s = harp ? 0.5 : 0.1;                         // tanpura: the highs ring on (its jawari buzz)
+      const s = harp ? 0.5 : 0.22;                        // tanpura: its jawari buzz rings, then mellows
       const t60 = harp ? Math.min(7, 5.5 * Math.sqrt(220 / freq)) : 9;
       const dur = harp ? Math.min(6, t60 + 0.5) : 7;
       const N = Math.max(4, Math.floor(sr / freq - s));
@@ -393,7 +393,7 @@
       const buf = ctx.createBuffer(1, len, sr), out = buf.getChannelData(0);
       const d = new Float32Array(N);
       let lp = 0;
-      const bright = harp ? 0.15 : 0.8;                  // harp: the soft pad of a finger, few highs in the pluck
+      const bright = harp ? 0.15 : 0.3;                  // harp: the soft pad of a finger, few highs in the pluck
       for(let i = 0; i < N; i++){ lp += bright * ((rand() * 2 - 1) - lp); d[i] = lp; }
       const P = Math.max(1, Math.round(N * (harp ? 0.18 : 0.08)));
       const e = d.slice();
@@ -410,10 +410,10 @@
         p = p + 1 === N ? 0 : p + 1;
         const a = Math.abs(old); if(a > peak) peak = a;
       }
-      const fade = Math.floor(sr * 0.3), rise = harp ? Math.floor(sr * 0.012) : 0;
+      const fade = Math.floor(sr * 0.3), rise = Math.floor(sr * (harp ? 0.012 : 0.005));
       for(let i = 0; i < len; i++){
         out[i] /= peak || 1;
-        if(i < rise) out[i] *= 0.5 - 0.5 * Math.cos(Math.PI * i / rise);   // harp: no click as the finger leaves the string
+        if(i < rise) out[i] *= 0.5 - 0.5 * Math.cos(Math.PI * i / rise);   // no click as the finger leaves the string
         if(i > len - fade) out[i] *= (len - i) / fade;
       }
       return { buf, rate: freq / (sr / (N + s)) };
@@ -624,12 +624,12 @@
         const drift = 0.985 + rand() * 0.03;                       // the breath itself wanders
         [[b + 7, 0], [b + 12, 0.25], [b + 12, 0.5], [b, 0.75]].forEach(([n, f], i) => {
           const m = n < 31 ? n + 12 : n;
-          const gain = [0.09, 0.075, 0.075, 0.1][i] * (0.92 + rand() * 0.16);
+          const gain = [0.09, 0.075, 0.075, 0.1][i] * (0.92 + rand() * 0.16) * 0.87;   // 0.87: the mellower strings at the old level
           this.pluck('tanpura', m, t + f * cycle * drift + rnd(-0.02, 0.02), gain, [-0.25, 0.1, 0.2, -0.05][i], this.tanpuraBus);
         });
         // an occasional extra Sa, as if the hand lingers on the string
         if(rand() < 0.22){
-          this.pluck('tanpura', b + 12, t + cycle * drift * 0.62 + rnd(-0.01, 0.01), 0.05 + rand() * 0.03, 0.15, this.tanpuraBus);
+          this.pluck('tanpura', b + 12, t + cycle * drift * 0.62 + rnd(-0.01, 0.01), (0.05 + rand() * 0.03) * 0.87, 0.15, this.tanpuraBus);
         }
         this.nextTanpuraAt += cycle * drift;
       }
