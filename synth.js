@@ -238,7 +238,7 @@ function StillSynthModule(G){
       let i = 0, flat = true;
       while(i < n){
         const k = k0 + i;
-        if(k >= this.nextF) this.refresh(k);
+        if(k >= this.nextF){ this.refresh(k); if(i > 0) flat = false; }   // a value changes inside the block
         const end = Math.min(n, this.nextF - k0);
         const g = this.seg;
         if(g){
