@@ -675,6 +675,7 @@ if(/[?&]debug\b/.test(location.search)) (() => {
       c ? 'latency base ' + (c.baseLatency || 0).toFixed(3) + ' out ' + (c.outputLatency || 0).toFixed(3) + ' · ch ' + c.destination.maxChannelCount : '',
       c && c.getOutputTimestamp ? (o => 'output ts ctx ' + (o.contextTime || 0).toFixed(2) + ' perf ' + ((o.performanceTime || 0) / 1000).toFixed(2) + ' · created ' + (e.ctx && e.ctx === e.preCtx ? 'on tap' : 'in start'))(c.getOutputTimestamp()) : '',
       'master ' + (e.master ? e.master.gain.value.toFixed(2) : '-') + ' · vol ' + (e.volume ? e.volume.gain.value.toFixed(2) : '-') + ' · rms ' + rms + ' · paused ' + e.paused + ' · lighter ' + (e.lighter || 0),
+      e.report ? 'new engine · buffer ' + (e.depth * 2048 / c.sampleRate).toFixed(2) + ' s · underruns ' + (e.underruns || 0) + ' · synth load ' + (e.report.load * 100).toFixed(0) + '%' : 'old engine',
       'activation ' + (navigator.userActivation ? navigator.userActivation.hasBeenActive : '?') + ' · ' + navigator.userAgent.slice(0, 90),
       'errors: ' + (errs.slice(-4).join(' | ') || 'none'),
     ].join('\n');
