@@ -638,3 +638,40 @@
   }
   requestAnimationFrame(frame);
 })();
+
+// ------------------------------------------------------------ ?debug: an on-screen audio readout, for phones without devtools
+if(/[?&]debug\b/.test(location.search)) (() => {
+  const errs = [];
+  window.addEventListener('error', e => errs.push(e.message));
+  window.addEventListener('unhandledrejection', e => errs.push(String(e.reason)));
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;left:6px;right:6px;bottom:6px;z-index:99999;background:rgba(0,0,0,.85);color:#0f0;font:11px/1.4 monospace;padding:6px;white-space:pre-wrap;pointer-events:auto';
+  const out = document.createElement('div'); box.appendChild(out);
+  const btn = (label, fn) => { const b = document.createElement('button'); b.textContent = label; b.style.cssText = 'margin:4px 4px 0 0;font:12px monospace'; b.onclick = e => { e.stopPropagation(); try { fn(); } catch(err) { errs.push(err.message); } }; box.appendChild(b); };
+  const E = () => window.__still.engine;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  btn('beep (new ctx)', () => { const c = new AC(); const o = c.createOscillator(); o.frequency.value = 660; o.connect(c.destination); o.start(); o.stop(c.currentTime + 0.4); });
+  btn('beep (app ctx)', () => { const c = E().ctx || E().preCtx; const o = c.createOscillator(); o.frequency.value = 660; o.connect(c.destination); o.start(); o.stop(c.currentTime + 0.4); });
+  btn('no rooms', () => { const e = E(); e.bus.disconnect(e.hall); e.bus.disconnect(e.vast); });
+  btn('no limiter', () => { const e = E(); e.volume.disconnect(); e.volume.connect(e.ctx.destination); });
+  document.body.appendChild(box);
+  let an, anFor, lastT = 0, lastW = 0;
+  setInterval(() => {
+    const e = E(), c = e.ctx || e.preCtx;
+    let rms = '-';
+    if(e.ctx && e.volume){
+      if(anFor !== e.ctx){ an = e.ctx.createAnalyser(); an.fftSize = 2048; e.volume.connect(an); anFor = e.ctx; }
+      const d = new Float32Array(2048); an.getFloatTimeDomainData(d);
+      let s = 0; for(const x of d) s += x * x; rms = Math.sqrt(s / d.length).toExponential(2);
+    }
+    const now = performance.now() / 1000, t = c ? c.currentTime : 0;
+    const speed = lastW ? ((t - lastT) / (now - lastW)).toFixed(2) : '-'; lastT = t; lastW = now;
+    out.textContent = [
+      'ctx: ' + (c ? c.state + ' · ' + c.sampleRate + ' Hz · t=' + t.toFixed(2) + ' · speed ' + speed : 'none'),
+      c ? 'latency base ' + (c.baseLatency || 0).toFixed(3) + ' out ' + (c.outputLatency || 0).toFixed(3) + ' · ch ' + c.destination.maxChannelCount : '',
+      'master ' + (e.master ? e.master.gain.value.toFixed(2) : '-') + ' · vol ' + (e.volume ? e.volume.gain.value.toFixed(2) : '-') + ' · rms ' + rms + ' · paused ' + e.paused,
+      'activation ' + (navigator.userActivation ? navigator.userActivation.hasBeenActive : '?') + ' · ' + navigator.userAgent.slice(0, 90),
+      'errors: ' + (errs.slice(-4).join(' | ') || 'none'),
+    ].join('\n');
+  }, 500);
+})();
