@@ -166,7 +166,8 @@
       if(this.ctx) return;
       opts = opts || {};
       this.exporting = !!opts.export;
-      ctx = this.ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+      ctx = this.ctx = ctx || this.preCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if(!this.exporting) this.unlock();
       const now = ctx.currentTime;
       const prevRng = RNG; RNG = mulberry(this.seed);   // the rooms and noise are the same in every chunk
 
@@ -795,6 +796,21 @@
     }
 
     // ------------------------------------------------------------ transport
+    // Mobile browsers only let audio start inside a tap. Call this from every gesture: it makes
+    // (or wakes) the context there, plays one silent sample (the old iOS unlock), and asks iOS
+    // to treat this as media playback so the silent switch doesn't mute it.
+    unlock(){
+      try { if(navigator.audioSession) navigator.audioSession.type = 'playback'; } catch(e) {}
+      const ctx = this.ctx || (this.preCtx = this.preCtx || new (window.AudioContext || window.webkitAudioContext)());
+      if(this.paused || ctx.state === 'running') return false;
+      ctx.resume().catch(() => {});
+      try {
+        const src = ctx.createBufferSource();
+        src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+        src.connect(ctx.destination); src.start(0);
+      } catch(e) {}
+      return true;
+    }
     pause(){
       if(!this.ctx || this.paused) return;
       this.paused = true;

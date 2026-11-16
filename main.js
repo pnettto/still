@@ -503,9 +503,19 @@
     playBtn.setAttribute('aria-label', 'pause');
     timerLast = Date.now(); armTimerEnd();
   }
+  // unlock audio on every real gesture (sliders' 'input' doesn't count on iOS); if the context
+  // was asleep (never allowed to start, or interrupted by a call / the lock screen), a tap on
+  // play should wake it rather than pause
+  let wokeAt = 0;
+  const unlock = () => { if(engine.unlock() && started) wokeAt = Date.now(); };
+  ['pointerdown', 'touchend', 'click', 'keydown'].forEach(t => document.addEventListener(t, unlock, true));
+
   function togglePlay(){
     if(!started) return begin();
     if(closing) return;
+    if(playing && (Date.now() - wokeAt < 1500 || (engine.ctx && engine.ctx.state !== 'running'))){
+      wokeAt = 0; engine.unlock(); return;
+    }
     playing = !playing;
     if(playing){
       engine.resume(); status('');
