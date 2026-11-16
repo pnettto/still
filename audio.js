@@ -187,8 +187,11 @@
       this.master.connect(comp).connect(this.volume).connect(limit).connect(ctx.destination);
 
       // two rooms: the hall of "here", and a much longer one that opens with space
-      this.hall = ctx.createConvolver(); this.hall.buffer = this.impulse(9, 2.6);
-      this.vast = ctx.createConvolver(); this.vast.buffer = this.impulse(16, 2.2);
+      // the rooms are long and slow to build: live, build them just after the tap, so the
+      // context starts cleanly (old phones stall otherwise); export needs them at once, seeded
+      this.hall = ctx.createConvolver(); this.vast = ctx.createConvolver();
+      const rooms = () => { this.hall.buffer = this.impulse(9, 2.6); this.vast.buffer = this.impulse(16, 2.2); };
+      if(this.exporting) rooms(); else setTimeout(() => seeded(this.seed, rooms), 300);
       this.hallWet = ctx.createGain(); this.vastWet = ctx.createGain(); this.dry = ctx.createGain();
       this.hall.connect(this.hallWet).connect(this.master);
       this.vast.connect(this.vastWet).connect(this.master);
@@ -801,6 +804,9 @@
     // to treat this as media playback so the silent switch doesn't mute it.
     unlock(){
       try { if(navigator.audioSession) navigator.audioSession.type = 'playback'; } catch(e) {}
+      // only make the context inside a real activation (on Android a touch's pointerdown isn't one)
+      const active = !navigator.userActivation || navigator.userActivation.isActive;
+      if(!this.ctx && !this.preCtx && !active) return false;
       const ctx = this.ctx || (this.preCtx = this.preCtx || new (window.AudioContext || window.webkitAudioContext)());
       if(this.paused || ctx.state === 'running') return false;
       ctx.resume().catch(() => {});

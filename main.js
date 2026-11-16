@@ -508,7 +508,7 @@
   // play should wake it rather than pause
   let wokeAt = 0;
   const unlock = () => { if(engine.unlock() && started) wokeAt = Date.now(); };
-  ['pointerdown', 'touchend', 'click', 'keydown'].forEach(t => document.addEventListener(t, unlock, true));
+  ['touchend', 'click', 'keydown'].forEach(t => document.addEventListener(t, unlock, true));
 
   function togglePlay(){
     if(!started) return begin();
@@ -652,7 +652,7 @@ if(/[?&]debug\b/.test(location.search)) (() => {
   const AC = window.AudioContext || window.webkitAudioContext;
   btn('beep (new ctx)', () => { const c = new AC(); const o = c.createOscillator(); o.frequency.value = 660; o.connect(c.destination); o.start(); o.stop(c.currentTime + 0.4); });
   btn('beep (app ctx)', () => { const c = E().ctx || E().preCtx; const o = c.createOscillator(); o.frequency.value = 660; o.connect(c.destination); o.start(); o.stop(c.currentTime + 0.4); });
-  btn('no rooms', () => { const e = E(); e.bus.disconnect(e.hall); e.bus.disconnect(e.vast); });
+  btn('no rooms', () => { const e = E(); try { e.bus.disconnect(e.hall); e.bus.disconnect(e.vast); } catch(err) {} });
   btn('no limiter', () => { const e = E(); e.volume.disconnect(); e.volume.connect(e.ctx.destination); });
   document.body.appendChild(box);
   let an, anFor, lastT = 0, lastW = 0;
@@ -660,7 +660,8 @@ if(/[?&]debug\b/.test(location.search)) (() => {
     const e = E(), c = e.ctx || e.preCtx;
     let rms = '-';
     if(e.ctx && e.volume){
-      if(anFor !== e.ctx){ an = e.ctx.createAnalyser(); an.fftSize = 2048; e.volume.connect(an); anFor = e.ctx; }
+      if(anFor !== e.ctx){ an = e.ctx.createAnalyser(); an.fftSize = 2048; anFor = e.ctx; }
+      try { e.volume.connect(an); } catch(err) {}
       const d = new Float32Array(2048); an.getFloatTimeDomainData(d);
       let s = 0; for(const x of d) s += x * x; rms = Math.sqrt(s / d.length).toExponential(2);
     }
@@ -669,6 +670,7 @@ if(/[?&]debug\b/.test(location.search)) (() => {
     out.textContent = [
       'ctx: ' + (c ? c.state + ' · ' + c.sampleRate + ' Hz · t=' + t.toFixed(2) + ' · speed ' + speed : 'none'),
       c ? 'latency base ' + (c.baseLatency || 0).toFixed(3) + ' out ' + (c.outputLatency || 0).toFixed(3) + ' · ch ' + c.destination.maxChannelCount : '',
+      c && c.getOutputTimestamp ? (o => 'output ts ctx ' + (o.contextTime || 0).toFixed(2) + ' perf ' + ((o.performanceTime || 0) / 1000).toFixed(2) + ' · created ' + (e.ctx && e.ctx === e.preCtx ? 'on tap' : 'in start'))(c.getOutputTimestamp()) : '',
       'master ' + (e.master ? e.master.gain.value.toFixed(2) : '-') + ' · vol ' + (e.volume ? e.volume.gain.value.toFixed(2) : '-') + ' · rms ' + rms + ' · paused ' + e.paused,
       'activation ' + (navigator.userActivation ? navigator.userActivation.hasBeenActive : '?') + ' · ' + navigator.userAgent.slice(0, 90),
       'errors: ' + (errs.slice(-4).join(' | ') || 'none'),
