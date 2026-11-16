@@ -163,10 +163,9 @@
   }
 
   // phones: no bass to carry the music, but nature (broadband hiss) comes through whole, so it
-  // sits lower and arrives slowly. Android: the convolution rooms are too heavy, so none at all.
+  // sits lower and arrives slowly.
   const UA = navigator.userAgent;
-  const ANDROID = /Android/i.test(UA);
-  const MOBILE = ANDROID || /iPhone|iPad|iPod/i.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1);
+  const MOBILE = /Android|iPhone|iPad|iPod/i.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1);
 
   // ------------------------------------------------------------ engine
   class Engine {
@@ -221,16 +220,14 @@
       // context starts cleanly (old phones stall otherwise); export needs them at once, seeded
       this.hall = ctx.createConvolver(); this.vast = ctx.createConvolver();
       const rooms = () => { this.hall.buffer = this.impulse(9, 2.6); this.vast.buffer = this.impulse(16, 2.2); };
-      this.noRooms = !this.exporting && ANDROID;
-      if(this.exporting) rooms(); else if(!this.noRooms) setTimeout(() => seeded(this.seed, rooms), 300);
+      if(this.exporting) rooms(); else setTimeout(() => seeded(this.seed, rooms), 300);
       this.hallWet = ctx.createGain(); this.vastWet = ctx.createGain(); this.dry = ctx.createGain();
       this.hall.connect(this.hallWet).connect(this.master);
       this.vast.connect(this.vastWet).connect(this.master);
 
       this.bus = ctx.createGain(); this.bus.gain.value = 0.55;
       this.bus.connect(this.dry).connect(this.master);
-      if(!this.noRooms){ this.bus.connect(this.hall); this.bus.connect(this.vast); this.vastOn = true; }
-      else this.vastOn = false;
+      this.bus.connect(this.hall); this.bus.connect(this.vast); this.vastOn = true;
 
       this.padFilter = ctx.createBiquadFilter();
       this.padFilter.type = 'lowpass'; this.padFilter.frequency.value = 700; this.padFilter.Q.value = 0.4;
@@ -255,7 +252,7 @@
       this.natBus.connect(this.natHigh).connect(natOut);
       natLow.connect(this.natNeg).connect(natOut);
       natOut.connect(comp);
-      if(!this.noRooms){ const send = ctx.createGain(); send.gain.value = 0.35; natOut.connect(send); send.connect(this.hall); send.connect(this.vast); }
+      const send = ctx.createGain(); send.gain.value = 0.35; natOut.connect(send); send.connect(this.hall); send.connect(this.vast);
 
       const len = ctx.sampleRate * 2;
       this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -281,7 +278,6 @@
       this.master.gain.setValueAtTime(0, now);
       this.master.gain.linearRampToValueAtTime(1.0, now + 10);
       if(!this.offline) this.timer = setInterval(() => this.tick(), 200);
-      if(!this.offline) this.watch = setInterval(() => this.watchdog(), 1000);
     }
 
     impulse(seconds, decay){
@@ -817,12 +813,12 @@
       const s = this.p.space;
       const hall = 0.1 + 1.5 * Math.min(s, 0.5);
       const vast = Math.max(0, s - 0.5) * 2 * 0.75;
-      const dry = this.noRooms ? 1 : 1 - Math.max(0, s - 0.5) * 1.2;   // no rooms: nothing to trade the dry for
+      const dry = 1 - Math.max(0, s - 0.5) * 1.2;
       const set = (g, v) => instant ? (g.gain.value = v) : g.gain.setTargetAtTime(v, this.ctx.currentTime, 0.8);
       set(this.hallWet, hall); set(this.vastWet, vast); set(this.dry, dry);
       // the long room is costly; only feed it while it can be heard
       clearTimeout(this.vastT);
-      if(vast > 0 && !this.vastOn && !this.noRooms){ this.bus.connect(this.vast); this.vastOn = true; }
+      if(vast > 0 && !this.vastOn){ this.bus.connect(this.vast); this.vastOn = true; }
       else if(vast === 0 && this.vastOn){
         const off = () => { this.bus.disconnect(this.vast); this.vastOn = false; };
         if(instant) off(); else this.vastT = setTimeout(off, 6000);
@@ -853,23 +849,6 @@
         g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(1, t + (MOBILE ? 20 : 5));
         nat.src = src;
       }).catch(e => console.warn(e));
-    }
-
-    // if the device can't render in real time (audio time falls behind the clock), it plays
-    // mostly silence: drop the long room, then shorten the hall, then drop it too
-    watchdog(){
-      const c = this.ctx, w = performance.now() / 1000, t = c.currentTime, last = this.wd;
-      this.wd = c.state === 'running' && !this.paused ? { t, w } : null;
-      if(!last || !this.wd) return;
-      const speed = (t - last.t) / (w - last.w);
-      this.lag = speed < 0.95 ? (this.lag || 0) + 1 : 0;
-      if(this.lag < 2 || (this.lighter || 0) >= 3 || this.noRooms) return;
-      this.lag = 0; this.lighter = (this.lighter || 0) + 1;
-      // costs measured offline: both rooms 26%, hall 4 s 7%, hall 2.5 s 5%, no rooms 2%
-      if(this.lighter === 1){ this.vast.buffer = null; this.hall.buffer = seeded(this.seed, () => this.impulse(4, 2.6)); }
-      else if(this.lighter === 2) this.hall.buffer = seeded(this.seed, () => this.impulse(2.5, 2.6));
-      else this.hall.buffer = null;
-      console.warn('still: audio falling behind (speed ' + speed.toFixed(2) + '), lighter rooms: step ' + this.lighter);
     }
 
     // ------------------------------------------------------------ transport
