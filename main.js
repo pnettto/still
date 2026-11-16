@@ -647,7 +647,7 @@ if(/[?&]debug\b/.test(location.search)) (() => {
   const box = document.createElement('div');
   box.style.cssText = 'position:fixed;left:6px;right:6px;bottom:6px;z-index:99999;background:rgba(0,0,0,.85);color:#0f0;font:11px/1.4 monospace;padding:6px;white-space:pre-wrap;pointer-events:auto';
   const out = document.createElement('div'); box.appendChild(out);
-  const btn = (label, fn) => { const b = document.createElement('button'); b.textContent = label; b.style.cssText = 'margin:4px 4px 0 0;font:12px monospace'; b.onclick = e => { e.stopPropagation(); try { fn(); } catch(err) { errs.push(err.message); } }; box.appendChild(b); };
+  const btn = (label, fn) => { const b = document.createElement('button'); b.textContent = label; b.style.cssText = 'margin:6px 6px 0 0;padding:10px 12px;font:14px monospace;color:#000;background:#0f0;border:0;border-radius:6px;-webkit-appearance:none;appearance:none'; b.onclick = e => { e.stopPropagation(); try { fn(); } catch(err) { errs.push(err.message); } }; box.appendChild(b); };
   const E = () => window.__still.engine;
   const AC = window.AudioContext || window.webkitAudioContext;
   btn('beep (new ctx)', () => { const c = new AC(); const o = c.createOscillator(); o.frequency.value = 660; o.connect(c.destination); o.start(); o.stop(c.currentTime + 0.4); });
