@@ -42,9 +42,9 @@ Keys: `space` pause · `h` hide everything · `f` fullscreen · double-click a s
 - Levels were checked offline (`OfflineAudioContext`). Every mood sits within about 4 dB of *here*, and peaks stay below −7 dBFS at the default volume.
 
 ## Deploy
-Live at **[still.pnetto.store](https://still.pnetto.store/)**, a custom domain on the Cloudflare Pages project `still` (`still-7xm.pages.dev`). It is a direct upload, not linked to GitHub, so pushing does not deploy. There is no build step: upload the app files as they are.
+Live at **[still.pnetto.store](https://still.pnetto.store/)**, a custom domain on the Cloudflare Pages project `still` (`still-7xm.pages.dev`). It is a direct upload, not linked to GitHub, so pushing does not deploy. There is no build step: upload the app files as they are. Bump the `?v=` on the script and style links in `index.html` with each deploy, or phones keep the old code. `_headers` also asks browsers to recheck `.js` and `.css` files.
 
 ```sh
-mkdir -p /tmp/still-dist && cp -r index.html audio.js main.js export.js style.css sounds vendor /tmp/still-dist/
+mkdir -p /tmp/still-dist && cp -r index.html _headers audio.js main.js export.js style.css sounds vendor /tmp/still-dist/
 npx wrangler pages deploy /tmp/still-dist --project-name still --branch main
 ```
