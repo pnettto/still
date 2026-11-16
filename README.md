@@ -39,6 +39,7 @@ Keys: `space` pause · `h` hide everything · `f` fullscreen · double-click a s
 - `sounds/*.js`: the nature recordings, loaded only when chosen.
 - `vendor/lame.min.js`: [lamejs](https://github.com/zhuker/lamejs) 1.2.1, the MP3 encoder (LGPL, unmodified; see `vendor/lamejs-LICENSE`), loaded only when exporting.
 - `?speed=N` fast-forwards the sitting timer for testing.
+- Phones: nature plays at about a third of its level (−9 dB) and fades in over 20 s, since phone speakers lose the music's low end but not the hiss of nature. Android gets no rooms (the convolution reverbs are too heavy for many phones); iOS and desktop keep them, and a watchdog shortens them on any device that falls behind real time. Exports are unaffected. `?debug` shows an on-screen audio readout.
 - Levels were checked offline (`OfflineAudioContext`). Every mood sits within about 4 dB of *here*, and peaks stay below −7 dBFS at the default volume.
 
 ## Deploy

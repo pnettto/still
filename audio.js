@@ -145,6 +145,12 @@
     try { return new AC({ latencyHint: 'playback' }); } catch(e) { return new AC(); }
   }
 
+  // phones: no bass to carry the music, but nature (broadband hiss) comes through whole, so it
+  // sits lower and arrives slowly. Android: the convolution rooms are too heavy, so none at all.
+  const UA = navigator.userAgent;
+  const ANDROID = /Android/i.test(UA);
+  const MOBILE = ANDROID || /iPhone|iPad|iPod/i.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1);
+
   // ------------------------------------------------------------ engine
   class Engine {
     // opts: seed (same seed → same music), G0 (global time at this context's 0, for export chunks),
@@ -198,15 +204,16 @@
       // context starts cleanly (old phones stall otherwise); export needs them at once, seeded
       this.hall = ctx.createConvolver(); this.vast = ctx.createConvolver();
       const rooms = () => { this.hall.buffer = this.impulse(9, 2.6); this.vast.buffer = this.impulse(16, 2.2); };
-      if(this.exporting) rooms(); else setTimeout(() => seeded(this.seed, rooms), 300);
+      this.noRooms = !this.exporting && ANDROID;
+      if(this.exporting) rooms(); else if(!this.noRooms) setTimeout(() => seeded(this.seed, rooms), 300);
       this.hallWet = ctx.createGain(); this.vastWet = ctx.createGain(); this.dry = ctx.createGain();
       this.hall.connect(this.hallWet).connect(this.master);
       this.vast.connect(this.vastWet).connect(this.master);
 
       this.bus = ctx.createGain(); this.bus.gain.value = 0.55;
       this.bus.connect(this.dry).connect(this.master);
-      this.bus.connect(this.hall);
-      this.bus.connect(this.vast); this.vastOn = true;
+      if(!this.noRooms){ this.bus.connect(this.hall); this.bus.connect(this.vast); this.vastOn = true; }
+      else this.vastOn = false;
 
       this.padFilter = ctx.createBiquadFilter();
       this.padFilter.type = 'lowpass'; this.padFilter.frequency.value = 700; this.padFilter.Q.value = 0.4;
@@ -756,7 +763,7 @@
     }
 
     volumeGain(){ return Math.pow(this.p.volume / 0.8, 2); }
-    natureGain(){ return 0.12 * Math.pow(this.p.natureLevel / 0.5, 2); }   // default: 60% of the previous level; up to 4× closer
+    natureGain(){ return 0.12 * Math.pow(this.p.natureLevel / 0.5, 2) * (MOBILE && !this.exporting ? 0.35 : 1); }   // default: 60% of the previous level; up to 4× closer
 
     applyLight(instant){
       const f = Math.min(this.ctx.sampleRate * 0.45, 16000, 9000 * Math.pow(2, (this.p.light - 0.5) * 5.8) * Math.sqrt(this.mood.bright));
@@ -768,12 +775,12 @@
       const s = this.p.space;
       const hall = 0.1 + 1.5 * Math.min(s, 0.5);
       const vast = Math.max(0, s - 0.5) * 2 * 0.75;
-      const dry = 1 - Math.max(0, s - 0.5) * 1.2;
+      const dry = this.noRooms ? 1 : 1 - Math.max(0, s - 0.5) * 1.2;   // no rooms: nothing to trade the dry for
       const set = (g, v) => instant ? (g.gain.value = v) : g.gain.setTargetAtTime(v, this.ctx.currentTime, 0.8);
       set(this.hallWet, hall); set(this.vastWet, vast); set(this.dry, dry);
       // the long room is costly; only feed it while it can be heard
       clearTimeout(this.vastT);
-      if(vast > 0 && !this.vastOn){ this.bus.connect(this.vast); this.vastOn = true; }
+      if(vast > 0 && !this.vastOn && !this.noRooms){ this.bus.connect(this.vast); this.vastOn = true; }
       else if(vast === 0 && this.vastOn){
         const off = () => { this.bus.disconnect(this.vast); this.vastOn = false; };
         if(instant) off(); else this.vastT = setTimeout(off, 6000);
@@ -801,7 +808,7 @@
         src.connect(g);
         const t = ctx.currentTime;
         src.start(t, rand() * buf.duration * 0.8);
-        g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(1, t + 5);
+        g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(1, t + (MOBILE ? 20 : 5));
         nat.src = src;
       }).catch(e => console.warn(e));
     }
@@ -814,7 +821,7 @@
       if(!last || !this.wd) return;
       const speed = (t - last.t) / (w - last.w);
       this.lag = speed < 0.95 ? (this.lag || 0) + 1 : 0;
-      if(this.lag < 2 || (this.lighter || 0) >= 3) return;
+      if(this.lag < 2 || (this.lighter || 0) >= 3 || this.noRooms) return;
       this.lag = 0; this.lighter = (this.lighter || 0) + 1;
       // costs measured offline: both rooms 26%, hall 4 s 7%, hall 2.5 s 5%, no rooms 2%
       if(this.lighter === 1){ this.vast.buffer = null; this.hall.buffer = seeded(this.seed, () => this.impulse(4, 2.6)); }
