@@ -249,7 +249,7 @@
       this.master.gain.setValueAtTime(0, now);
       this.master.gain.linearRampToValueAtTime(1.0, now + 10);
       if(!this.offline) this.timer = setInterval(() => this.tick(), 200);
-      if(!this.offline) this.watch = setInterval(() => this.watchdog(), 2000);
+      if(!this.offline) this.watch = setInterval(() => this.watchdog(), 1000);
     }
 
     impulse(seconds, decay){
@@ -816,8 +816,9 @@
       this.lag = speed < 0.95 ? (this.lag || 0) + 1 : 0;
       if(this.lag < 2 || (this.lighter || 0) >= 3) return;
       this.lag = 0; this.lighter = (this.lighter || 0) + 1;
-      if(this.lighter === 1) this.vast.buffer = null;
-      else if(this.lighter === 2) this.hall.buffer = seeded(this.seed, () => this.impulse(3, 2.6));
+      // costs measured offline: both rooms 26%, hall 4 s 7%, hall 2.5 s 5%, no rooms 2%
+      if(this.lighter === 1){ this.vast.buffer = null; this.hall.buffer = seeded(this.seed, () => this.impulse(4, 2.6)); }
+      else if(this.lighter === 2) this.hall.buffer = seeded(this.seed, () => this.impulse(2.5, 2.6));
       else this.hall.buffer = null;
       console.warn('still: audio falling behind (speed ' + speed.toFixed(2) + '), lighter rooms: step ' + this.lighter);
     }
