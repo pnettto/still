@@ -330,11 +330,9 @@ function StillSynthModule(G){
       const d = this.data, L = d.length, r = this.rate;
       let p = this.pos;
       for(let i = a; i < b; i++){
-        if(p >= L - 1){
-          if(this.loop) p -= L; else { if(p < L) o[i] = d[L - 1] * (1 - (p - (L - 1))); p = Infinity; break; }
-        }
-        const k = p | 0, fr = p - k;
-        o[i] = fr ? d[k] + (d[k + 1] - d[k]) * fr : d[k];
+        if(p >= L){ if(this.loop) p -= L; else { p = Infinity; break; } }
+        const k = p | 0, fr = p - k, nx = k + 1 < L ? d[k + 1] : this.loop ? d[0] : 0;
+        o[i] = fr ? d[k] + (nx - d[k]) * fr : d[k];
         p += r;
       }
       this.pos = p;

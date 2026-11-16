@@ -1,0 +1,53 @@
+<!doctype html><meta charset="utf-8"><title>still: old vs new engine</title>
+<script src="legacy-audio.js"></script><script src="../synth.js"></script>
+<pre id="out">rendering…</pre>
+<script>
+// Renders the same seed and settings through the old Web Audio engine (offline, as export did) and the new
+// synth, then compares loudness over time and the balance of frequencies. ?mode=&voice=&secs=&space=
+const q = new URLSearchParams(location.search);
+const P = { mode: 'here', voice: 'wood', nature: 'none', pitch: 7, a432: false, breath: 6, melody: 0.5, drone: 0.5, light: 0.5, space: 0.5, natureLevel: 0.5, volume: 0.8, bells: 0 };
+q.forEach((v, k) => { if(k in P) P[k] = typeof P[k] === 'number' ? +v : v; });
+const SR = 44100, SECS = +(q.get('secs') || 60), SEED = +(q.get('seed') || 7);
+async function oldEngine(){
+  const ctx = new OfflineAudioContext(2, SR * SECS, SR);
+  const e = new Still.Engine(P, { seed: SEED, G0: 0, cutoff: 0 }); e.offline = true; e.start(ctx, { export: true });
+  const f = e.padFilter.frequency, rate = P.breath / 60;
+  for(let t = 0; t <= SECS; t += 0.1){ const b = 0.5 - 0.5 * Math.cos(t * rate * Math.PI * 2); if(t === 0) f.setValueAtTime(e.breathFreq(b), 0); else f.linearRampToValueAtTime(e.breathFreq(b), t); }
+  for(let k = 0; k * 0.2 <= SECS; k++) e.tick(k * 0.2);
+  const b = await ctx.startRendering(); return [b.getChannelData(0), b.getChannelData(1)];
+}
+function newEngine(){
+  const s = new StillSynth.Synth(P, { seed: SEED, sr: SR }), B = StillSynth.BLOCK, n = Math.ceil(SR * SECS / B) * B;
+  const L = new Float32Array(n), R = new Float32Array(n), t = performance.now(); s.render(L, R, n);
+  newEngine.ms = performance.now() - t;
+  // the old engine's limiter and volume sit after the compressor; at volume 0.8 they are linear here
+  return [L.subarray(0, SR * SECS), R.subarray(0, SR * SECS)];
+}
+const db = x => (20 * Math.log10(x + 1e-12)).toFixed(1);
+function rms(a, i0, i1){ let s = 0; for(let i = i0; i < i1; i++) s += a[i] * a[i]; return Math.sqrt(s / (i1 - i0)); }
+function bands(x){   // energy in octave bands, by simple FFT-free filtering (biquad bandpasses via OfflineAudioContext would do; here: DFT on 4096-frame frames)
+  const N = 4096, edges = [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000], e = new Float64Array(edges.length - 1);
+  for(let f0 = 0; f0 + N <= x.length; f0 += N * 4){
+    const re = new Float64Array(N), im = new Float64Array(N);
+    for(let i = 0; i < N; i++) re[i] = x[f0 + i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / N));
+    for(let k = 1; k < N / 2; k++){
+      const hz = k * SR / N; let bi = edges.findIndex((v, j) => hz >= v && hz < edges[j + 1]); if(bi < 0) continue;
+      let r = 0, m = 0; for(let i = 0; i < N; i += 1){ const a = 2 * Math.PI * k * i / N; r += re[i] * Math.cos(a); m -= re[i] * Math.sin(a); }
+      e[bi] += r * r + m * m;
+    }
+  }
+  return [edges, e];
+}
+(async () => {
+  const t0 = performance.now(); const A = await oldEngine(); const oldMs = performance.now() - t0;
+  const Bn = newEngine();
+  const lines = [`settings ${JSON.stringify(P)} seed ${SEED}, ${SECS}s`, `old render ${oldMs.toFixed(0)} ms · new render ${newEngine.ms.toFixed(0)} ms`];
+  lines.push('overall rms  old ' + db(rms(A[0], 0, A[0].length)) + ' dB · new ' + db(rms(Bn[0], 0, Bn[0].length)) + ' dB');
+  let res = 0, ref = 0; for(let c = 0; c < 2; c++) for(let i = 0; i < A[c].length; i++){ const d = A[c][i] - Bn[c][i]; res += d * d; ref += A[c][i] * A[c][i]; }
+  lines.push('difference (null test) ' + db(Math.sqrt(res / ref)) + ' dB below the music');
+  lines.push('every 5 s (old / new dB):');
+  for(let s = 0; s < SECS; s += 5) lines.push(`  ${s}s  ${db(rms(A[0], s * SR, (s + 5) * SR))} / ${db(rms(Bn[0], s * SR, (s + 5) * SR))}`);
+  window.RESULT = lines.join('\n'); document.getElementById('out').textContent = window.RESULT;
+  window.DONE = true;
+})();
+</script>
