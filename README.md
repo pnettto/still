@@ -33,7 +33,9 @@ Also: **bells**, a soft bowl every 5, 10, 15 or 20 minutes of music, for coming 
 Keys: `space` pause · `h` hide everything · `f` fullscreen · double-click a slider to reset it.
 
 ## Files
-- `audio.js`: the engine. At its defaults it produces the music of [here](https://github.com/pnettto/here) (`js/audio.js`), at the same level. Moods are described as data (scale, progression, voicing, pad timbre, drone, motion, register, density, brightness) in `MOODS`.
+- `synth.js`: the engine as plain JS (score, voices, rooms, compressor), run in a Worker. It renders the music a little ahead and streams it to `live.js`'s AudioWorklet player, which only copies samples, so slow phones drain a buffer instead of glitching (the buffer grows by itself if they fall behind). It reproduces `audio.js` closely: `test/compare.html?mode=…&voice=…` renders both from one seed and compares them (every mood within 0.1 dB; the difference is 31–74 dB below the music, mostly the pads' oscillators drifting in phase). Export renders through it too, in one continuous pass.
+- `live.js`: live playback through `synth.js`; volume, nature and pause stay native, after the player. `?legacy` uses the old engine.
+- `audio.js`: the old engine (pure Web Audio), kept for browsers without AudioWorklet; `test/legacy-audio.js` is its reference copy. At its defaults it produces the music of [here](https://github.com/pnettto/here) (`js/audio.js`), at the same level. Moods are described as data (scale, progression, voicing, pad timbre, drone, motion, register, density, brightness) in `MOODS`.
 - `main.js`: the controls, the quiet wash of light behind them, the timer, saved settings and share links. `window.__still` exposes the engine for debugging.
 - `export.js`: renders the music offline in overlapping chunks (an hour doesn't fit in memory at once) and encodes MP3. The engine's randomness is seeded: every note draws from a sequence keyed to its moment in time, so every chunk replays the same score and they agree to within −55 dB at the seams. The drone oscillators start in phase with the whole piece.
 - `sounds/*.js`: the nature recordings, loaded only when chosen.
@@ -46,6 +48,6 @@ Keys: `space` pause · `h` hide everything · `f` fullscreen · double-click a s
 Live at **[still.pnetto.store](https://still.pnetto.store/)**, a custom domain on the Cloudflare Pages project `still` (`still-7xm.pages.dev`). It is a direct upload, not linked to GitHub, so pushing does not deploy. There is no build step: upload the app files as they are. Bump the `?v=` on the script and style links in `index.html` with each deploy, or phones keep the old code. `_headers` also asks browsers to recheck `.js` and `.css` files.
 
 ```sh
-mkdir -p /tmp/still-dist && cp -r index.html _headers audio.js main.js export.js style.css sounds vendor /tmp/still-dist/
+mkdir -p /tmp/still-dist && cp -r index.html _headers audio.js synth.js live.js main.js export.js style.css sounds vendor /tmp/still-dist/
 npx wrangler pages deploy /tmp/still-dist --project-name still --branch main
 ```

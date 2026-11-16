@@ -1,7 +1,8 @@
 // STILL — the controls, a quiet wash of light, the sitting timer
 
 (function(){
-  const { Engine } = window.Still;
+  // the new engine (worker + worklet) where it can run; the old Web Audio one otherwise, or with ?legacy
+  const Engine = window.StillLive && !/[?&]legacy\b/.test(location.search) ? window.StillLive.Engine : window.Still.Engine;
   const SPEED = parseFloat(new URLSearchParams(location.search).get('speed')) || 1;   // debug: fast-forward the timer
 
   // ------------------------------------------------------------ state
@@ -570,6 +571,8 @@
   function frame(now){
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
     if(playing) { phase += dt * state.breath / 60; t += dt; }
+    const heard = engine.breathPhase && engine.breathPhase();   // the new engine: follow the breath being heard
+    if(heard !== null && heard !== undefined) phase = heard;
     const breath = 0.5 - 0.5 * Math.cos(phase * Math.PI * 2);
     engine.breathe(breath);
     bright += ((playing ? 1 : started ? 0.45 : 0.6) - bright) * Math.min(1, dt / 2);
@@ -672,6 +675,7 @@ if(/[?&]debug\b/.test(location.search)) (() => {
       c ? 'latency base ' + (c.baseLatency || 0).toFixed(3) + ' out ' + (c.outputLatency || 0).toFixed(3) + ' · ch ' + c.destination.maxChannelCount : '',
       c && c.getOutputTimestamp ? (o => 'output ts ctx ' + (o.contextTime || 0).toFixed(2) + ' perf ' + ((o.performanceTime || 0) / 1000).toFixed(2) + ' · created ' + (e.ctx && e.ctx === e.preCtx ? 'on tap' : 'in start'))(c.getOutputTimestamp()) : '',
       'master ' + (e.master ? e.master.gain.value.toFixed(2) : '-') + ' · vol ' + (e.volume ? e.volume.gain.value.toFixed(2) : '-') + ' · rms ' + rms + ' · paused ' + e.paused + ' · lighter ' + (e.lighter || 0),
+      e.report ? 'new engine · buffer ' + (e.depth * 2048 / c.sampleRate).toFixed(2) + ' s · underruns ' + (e.underruns || 0) + ' · synth load ' + (e.report.load * 100).toFixed(0) + '%' : 'old engine',
       'activation ' + (navigator.userActivation ? navigator.userActivation.hasBeenActive : '?') + ' · ' + navigator.userAgent.slice(0, 90),
       'errors: ' + (errs.slice(-4).join(' | ') || 'none'),
     ].join('\n');
