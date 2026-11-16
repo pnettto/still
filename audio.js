@@ -145,31 +145,6 @@
     try { return new AC({ latencyHint: 'playback' }); } catch(e) { return new AC(); }
   }
 
-  // A cheap room for slow phones: eight damped feedback delays (a Schroeder/Freeverb-style comb
-  // bank) instead of a long convolution. About a tenth of the cost; a little plainer.
-  function liteRoom(ctx, t60, damp, level, size){
-    const input = ctx.createGain(); input.channelCount = 1; input.channelCountMode = 'explicit';
-    const output = ctx.createGain(); output.gain.value = level;
-    const pre = ctx.createDelay(0.2); pre.delayTime.value = 0.025;
-    input.connect(pre);
-    [0.0371, 0.0419, 0.0467, 0.0521, 0.0577, 0.0631, 0.0697, 0.0773].forEach((t, i) => {
-      t *= size;
-      const d = ctx.createDelay(0.5); d.delayTime.value = t;
-      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = damp; lp.Q.value = 0;
-      const fb = ctx.createGain(); fb.gain.value = Math.pow(10, -3 * t / t60);
-      pre.connect(d); d.connect(lp).connect(fb).connect(d);
-      const pan = ctx.createStereoPanner(); pan.pan.value = i % 2 ? 0.7 : -0.7;
-      lp.connect(pan).connect(output);
-    });
-    return { input, output };
-  }
-  // phones that likely can't afford the convolution rooms start with the lite ones (the watchdog
-  // switches any device that falls behind)
-  function lowPower(){
-    const n = navigator;
-    return /Android/i.test(n.userAgent) && ((n.deviceMemory || 8) <= 4 || (n.hardwareConcurrency || 8) <= 4);
-  }
-
   // ------------------------------------------------------------ engine
   class Engine {
     // opts: seed (same seed → same music), G0 (global time at this context's 0, for export chunks),
@@ -221,16 +196,12 @@
       // two rooms: the hall of "here", and a much longer one that opens with space
       // the rooms are long and slow to build: live, build them just after the tap, so the
       // context starts cleanly (old phones stall otherwise); export needs them at once, seeded
+      this.hall = ctx.createConvolver(); this.vast = ctx.createConvolver();
+      const rooms = () => { this.hall.buffer = this.impulse(9, 2.6); this.vast.buffer = this.impulse(16, 2.2); };
+      if(this.exporting) rooms(); else setTimeout(() => seeded(this.seed, rooms), 300);
       this.hallWet = ctx.createGain(); this.vastWet = ctx.createGain(); this.dry = ctx.createGain();
-      this.hallWet.connect(this.master); this.vastWet.connect(this.master);
-      this.lite = !this.exporting && lowPower();
-      if(this.lite) this.liteRooms();
-      else {
-        this.hall = ctx.createConvolver(); this.vast = ctx.createConvolver();
-        this.hall.connect(this.hallWet); this.vast.connect(this.vastWet);
-        const rooms = () => { if(this.lite) return; this.hall.buffer = this.impulse(9, 2.6); this.vast.buffer = this.impulse(16, 2.2); };
-        if(this.exporting) rooms(); else setTimeout(() => seeded(this.seed, rooms), 300);
-      }
+      this.hall.connect(this.hallWet).connect(this.master);
+      this.vast.connect(this.vastWet).connect(this.master);
 
       this.bus = ctx.createGain(); this.bus.gain.value = 0.55;
       this.bus.connect(this.dry).connect(this.master);
@@ -278,7 +249,7 @@
       this.master.gain.setValueAtTime(0, now);
       this.master.gain.linearRampToValueAtTime(1.0, now + 10);
       if(!this.offline) this.timer = setInterval(() => this.tick(), 200);
-      if(!this.offline) this.watch = setInterval(() => this.watchdog(), 1000);
+      if(!this.offline) this.watch = setInterval(() => this.watchdog(), 2000);
     }
 
     impulse(seconds, decay){
@@ -802,7 +773,7 @@
       set(this.hallWet, hall); set(this.vastWet, vast); set(this.dry, dry);
       // the long room is costly; only feed it while it can be heard
       clearTimeout(this.vastT);
-      if(vast > 0 && !this.vastOn && !this.noVast){ this.bus.connect(this.vast); this.vastOn = true; }
+      if(vast > 0 && !this.vastOn){ this.bus.connect(this.vast); this.vastOn = true; }
       else if(vast === 0 && this.vastOn){
         const off = () => { this.bus.disconnect(this.vast); this.vastOn = false; };
         if(instant) off(); else this.vastT = setTimeout(off, 6000);
@@ -845,22 +816,10 @@
       this.lag = speed < 0.95 ? (this.lag || 0) + 1 : 0;
       if(this.lag < 2 || (this.lighter || 0) >= 3) return;
       this.lag = 0; this.lighter = (this.lighter || 0) + 1;
-      if(this.lighter === 1 && !this.lite) this.liteRooms();
-      else if(this.lighter <= 2){ this.lighter = 2; this.noVast = true; if(this.vastOn){ this.bus.disconnect(this.vast); this.vastOn = false; } }
-      else this.bus.disconnect(this.hall);
+      if(this.lighter === 1) this.vast.buffer = null;
+      else if(this.lighter === 2) this.hall.buffer = seeded(this.seed, () => this.impulse(3, 2.6));
+      else this.hall.buffer = null;
       console.warn('still: audio falling behind (speed ' + speed.toFixed(2) + '), lighter rooms: step ' + this.lighter);
-    }
-
-    // swap the convolution rooms for the lite ones (at start on slow phones, or when falling behind)
-    liteRooms(){
-      const ctx = this.ctx, had = !!this.hall;
-      const h = liteRoom(ctx, 4.5, 2600, 0.0086, 1), v = liteRoom(ctx, 8, 1800, 0.0063, 1.45);
-      h.output.connect(this.hallWet); v.output.connect(this.vastWet);
-      if(had){
-        this.bus.connect(h.input); if(this.vastOn) this.bus.connect(v.input);
-        [this.hall, this.vast].forEach(c => { try { this.bus.disconnect(c); } catch(e) {} try { c.disconnect(); c.buffer = null; } catch(e) {} });
-      }
-      this.hall = h.input; this.vast = v.input; this.lite = true;
     }
 
     // ------------------------------------------------------------ transport
