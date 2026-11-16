@@ -2,7 +2,7 @@
 
 *Music for sitting quietly.*
 
-**→ [pnettto.github.io/still](https://pnettto.github.io/still/)**
+**→ [still.pnetto.store](https://still.pnetto.store/)**
 
 A meditation and yoga music maker, grown from the generative music of **here**. Open `index.html` and touch the small light. It begins exactly where *here* begins: the same warm drone, the same slow chords breathing six times a minute, the same soft wooden voice. From there you steer.
 
@@ -40,3 +40,11 @@ Keys: `space` pause · `h` hide everything · `f` fullscreen · double-click a s
 - `vendor/lame.min.js`: [lamejs](https://github.com/zhuker/lamejs) 1.2.1, the MP3 encoder (LGPL, unmodified; see `vendor/lamejs-LICENSE`), loaded only when exporting.
 - `?speed=N` fast-forwards the sitting timer for testing.
 - Levels were checked offline (`OfflineAudioContext`). Every mood sits within about 4 dB of *here*, and peaks stay below −7 dBFS at the default volume.
+
+## Deploy
+Live at **[still.pnetto.store](https://still.pnetto.store/)**, a custom domain on the Cloudflare Pages project `still` (`still-7xm.pages.dev`). It is a direct upload, not linked to GitHub, so pushing does not deploy. There is no build step: upload the app files as they are.
+
+```sh
+mkdir -p /tmp/still-dist && cp -r index.html audio.js main.js export.js style.css sounds vendor /tmp/still-dist/
+npx wrangler pages deploy /tmp/still-dist --project-name still --branch main
+```
