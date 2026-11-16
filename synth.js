@@ -323,7 +323,8 @@ function StillSynthModule(G){
   }
   class BufSrc extends Source {
     constructor(s, data){ super(s); this.data = data; this.pos = 0; this.loop = false; this.rate = 1; }
-    start(t, offset){ super.start(t); this.pos = Math.round((offset || 0) * this.s.sr); if(this.pos >= this.data.length) this.pos = this.loop ? this.pos % this.data.length : this.data.length; return this; }
+    // sub-sample accurate, as Web Audio: at the first frame the read position is already a little in
+    start(t, offset){ super.start(t); this.pos = (offset || 0) * this.s.sr + Math.max(0, this.startF - t * this.s.sr) * this.rate; if(this.pos >= this.data.length) this.pos = this.loop ? this.pos % this.data.length : this.data.length; return this; }
     process(){
       const o = this.out; o.fill(0);
       const [a, b] = this.span(); if(a >= b) return;
