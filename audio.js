@@ -138,6 +138,13 @@
     return out;
   }
 
+  // live playback asks for big buffers: latency doesn't matter for this music, and with the
+  // default tiny ones (4 ms on Android) slower phones miss deadlines and play mostly silence
+  function liveContext(){
+    const AC = window.AudioContext || window.webkitAudioContext;
+    try { return new AC({ latencyHint: 'playback' }); } catch(e) { return new AC(); }
+  }
+
   // ------------------------------------------------------------ engine
   class Engine {
     // opts: seed (same seed → same music), G0 (global time at this context's 0, for export chunks),
@@ -166,7 +173,7 @@
       if(this.ctx) return;
       opts = opts || {};
       this.exporting = !!opts.export;
-      ctx = this.ctx = ctx || this.preCtx || new (window.AudioContext || window.webkitAudioContext)();
+      ctx = this.ctx = ctx || this.preCtx || liveContext();
       if(!this.exporting) this.unlock();
       const now = ctx.currentTime;
       const prevRng = RNG; RNG = mulberry(this.seed);   // the rooms and noise are the same in every chunk
@@ -242,6 +249,7 @@
       this.master.gain.setValueAtTime(0, now);
       this.master.gain.linearRampToValueAtTime(1.0, now + 10);
       if(!this.offline) this.timer = setInterval(() => this.tick(), 200);
+      if(!this.offline) this.watch = setInterval(() => this.watchdog(), 2000);
     }
 
     impulse(seconds, decay){
@@ -798,6 +806,22 @@
       }).catch(e => console.warn(e));
     }
 
+    // if the device can't render in real time (audio time falls behind the clock), it plays
+    // mostly silence: drop the long room, then shorten the hall, then drop it too
+    watchdog(){
+      const c = this.ctx, w = performance.now() / 1000, t = c.currentTime, last = this.wd;
+      this.wd = c.state === 'running' && !this.paused ? { t, w } : null;
+      if(!last || !this.wd) return;
+      const speed = (t - last.t) / (w - last.w);
+      this.lag = speed < 0.95 ? (this.lag || 0) + 1 : 0;
+      if(this.lag < 2 || (this.lighter || 0) >= 3) return;
+      this.lag = 0; this.lighter = (this.lighter || 0) + 1;
+      if(this.lighter === 1) this.vast.buffer = null;
+      else if(this.lighter === 2) this.hall.buffer = seeded(this.seed, () => this.impulse(3, 2.6));
+      else this.hall.buffer = null;
+      console.warn('still: audio falling behind (speed ' + speed.toFixed(2) + '), lighter rooms: step ' + this.lighter);
+    }
+
     // ------------------------------------------------------------ transport
     // Mobile browsers only let audio start inside a tap. Call this from every gesture: it makes
     // (or wakes) the context there, plays one silent sample (the old iOS unlock), and asks iOS
@@ -807,7 +831,7 @@
       // only make the context inside a real activation (on Android a touch's pointerdown isn't one)
       const active = !navigator.userActivation || navigator.userActivation.isActive;
       if(!this.ctx && !this.preCtx && !active) return false;
-      const ctx = this.ctx || (this.preCtx = this.preCtx || new (window.AudioContext || window.webkitAudioContext)());
+      const ctx = this.ctx || (this.preCtx = this.preCtx || liveContext());
       if(this.paused || ctx.state === 'running') return false;
       ctx.resume().catch(() => {});
       try {
