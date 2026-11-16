@@ -6,7 +6,8 @@
 
 function StillSynthModule(G){
   'use strict';
-  const BLOCK = 512;                 // frames per internal block (also the reverb's first partition)
+  const BLOCK = 512;
+  const HARP_GAIN = 0.092;          // the softened harp at the level of the old one                 // frames per internal block (also the reverb's first partition)
 
   // ------------------------------------------------------------ harmony (as in audio.js)
   const HERE_CHORDS = [
@@ -780,7 +781,7 @@ function StillSynthModule(G){
       const out = new Float32Array(len);
       const d = new Float32Array(N);
       let lp = 0;
-      const bright = harp ? 0.35 : 0.8;
+      const bright = harp ? 0.15 : 0.8;                  // harp: the soft pad of a finger, few highs in the pluck
       for(let i = 0; i < N; i++){ lp += bright * ((rand() * 2 - 1) - lp); d[i] = lp; }
       const P = Math.max(1, Math.round(N * (harp ? 0.18 : 0.08)));
       const e = d.slice();
@@ -797,9 +798,10 @@ function StillSynthModule(G){
         p = p + 1 === N ? 0 : p + 1;
         const a = Math.abs(old); if(a > peak) peak = a;
       }
-      const fade = Math.floor(sr * 0.3);
+      const fade = Math.floor(sr * 0.3), rise = harp ? Math.floor(sr * 0.012) : 0;
       for(let i = 0; i < len; i++){
         out[i] /= peak || 1;
+        if(i < rise) out[i] *= 0.5 - 0.5 * Math.cos(Math.PI * i / rise);   // harp: no click as the finger leaves the string
         if(i > len - fade) out[i] *= (len - i) / fade;
       }
       return { buf: out, rate: freq / (sr / (N + s)) };
@@ -890,8 +892,8 @@ function StillSynthModule(G){
         thump(Math.min(fr * 4, 4000), 2, 0.06 * vel, 0.012);
       }
       else if(voice === 'harp'){
-        out.gain.value = 0.11 * vel;
-        const warm = new Biquad(this, 'lowpass', 2400 + 1600 * vel);
+        out.gain.value = HARP_GAIN * vel;
+        const warm = new Biquad(this, 'lowpass', 1300 + 600 * vel, 0);
         warm.connect(out);
         srcs.push(this.pluck('harp', m, when, 1, 0, null, warm));
       }
